@@ -43,6 +43,8 @@
 #include <drm/drm_probe_helper.h>
 #include <drm/virtgpu_drm.h>
 
+
+
 #define DRIVER_NAME "virtio_gpu"
 #define DRIVER_DESC "virtio GPU"
 #define DRIVER_DATE "0"
@@ -175,6 +177,9 @@ struct virtio_gpu_vbuffer {
 	uint32_t seqno;
 };
 
+#define VIRTIO_GPU_MAX_PLANES 6
+/*hardcode igpu scaler number ver>11 */
+#define SKL_NUM_SCALERS 2
 struct virtio_gpu_output {
 	int index;
 	struct drm_crtc crtc;
@@ -186,6 +191,9 @@ struct virtio_gpu_output {
 	int cur_x;
 	int cur_y;
 	bool needs_modeset;
+	int plane_num;
+	uint64_t rotation[VIRTIO_GPU_MAX_PLANES];
+	unsigned scaler_users;
 };
 #define drm_crtc_to_virtio_gpu_output(x) \
 	container_of(x, struct virtio_gpu_output, crtc)
@@ -256,6 +264,9 @@ struct virtio_gpu_device {
 	bool has_scaling;
 	bool has_vblank;
 	bool has_allow_p2p;
+	bool has_multi_plane;
+	bool has_rotation;
+	bool has_pixel_blend_mode;
 	bool has_indirect;
 	bool has_resource_assign_uuid;
 	bool has_resource_blob;
@@ -358,6 +369,21 @@ void virtio_gpu_cmd_set_scanout(struct virtio_gpu_device *vgdev,
 				uint32_t scanout_id, uint32_t resource_id,
 				uint32_t width, uint32_t height,
 				uint32_t x, uint32_t y);
+
+void virtio_gpu_cmd_flush_sync(struct virtio_gpu_device *vgdev,
+				   uint32_t scanout_id);
+
+void virtio_gpu_cmd_resource_flush_sprite(struct virtio_gpu_device *vgdev,
+				   uint32_t scanout_id,
+				   uint32_t plane_indx,
+				   struct drm_framebuffer *fb,
+				   uint32_t *resource_id,
+				   uint32_t resource_cnt,
+				   uint32_t x, uint32_t y,
+				   uint32_t width, uint32_t height,
+				   struct virtio_gpu_object_array *objs,
+				   struct virtio_gpu_fence *fence);
+
 void virtio_gpu_object_attach(struct virtio_gpu_device *vgdev,
 			      struct virtio_gpu_object *obj,
 			      struct virtio_gpu_mem_entry *ents,
@@ -436,6 +462,14 @@ virtio_gpu_cmd_resource_create_blob(struct virtio_gpu_device *vgdev,
 				    struct virtio_gpu_object_params *params,
 				    struct virtio_gpu_mem_entry *ents,
 				    uint32_t nents);
+
+
+int virtio_gpu_cmd_get_planes_info(struct virtio_gpu_device *vgdev, int idx);
+
+
+int virtio_gpu_cmd_get_plane_rotation(struct virtio_gpu_device *vgdev,
+				      uint32_t plane_id, uint32_t scanout_indx);
+
 void
 virtio_gpu_cmd_set_scanout_blob(struct virtio_gpu_device *vgdev,
 				uint32_t scanout_id,
@@ -451,6 +485,9 @@ void virtio_gpu_cmd_set_scaling(struct virtio_gpu_device *vgdev,
 				     uint32_t scanout_id,
 				     struct drm_rect *rect_dst);
 
+void virtio_gpu_cmd_send_misc(struct virtio_gpu_device *vgdev, uint32_t scanout_id,
+		uint32_t plane_indx, struct virtio_gpu_cmd *cmdp, int cnt);
+
 /* virtgpu_display.c */
 int virtio_gpu_modeset_init(struct virtio_gpu_device *vgdev);
 void virtio_gpu_modeset_fini(struct virtio_gpu_device *vgdev);
@@ -460,6 +497,7 @@ uint32_t virtio_gpu_translate_format(uint32_t drm_fourcc);
 struct drm_plane *virtio_gpu_plane_init(struct virtio_gpu_device *vgdev,
 					enum drm_plane_type type,
 					int index);
+void virtio_update_planes_info(int index, int num, u32 *info);
 
 /* virtgpu_fence.c */
 struct virtio_gpu_fence *virtio_gpu_fence_alloc(struct virtio_gpu_device *vgdev,

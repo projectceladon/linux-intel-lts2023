@@ -147,7 +147,30 @@ static void virtio_gpu_crtc_atomic_disable(struct drm_crtc *crtc,
 static int virtio_gpu_crtc_atomic_check(struct drm_crtc *crtc,
 					struct drm_atomic_state *state)
 {
+	struct virtio_gpu_output *output = NULL;
+	struct drm_device *dev = crtc->dev;
+	int num_scalers_need;
+	struct virtio_gpu_device *vgdev = dev->dev_private;
+
+	output = drm_crtc_to_virtio_gpu_output(crtc);
+	if(vgdev->has_scaling) {
+		num_scalers_need = hweight32(output->scaler_users);
+		if(num_scalers_need > SKL_NUM_SCALERS) {
+			drm_dbg_kms(dev, "Too many scaling requests %d > %d\n", num_scalers_need, SKL_NUM_SCALERS);
+			output->scaler_users = 0;
+			return -EINVAL;
+		}
+	}
 	return 0;
+}
+
+static void virtio_gpu_resource_flush_sync(struct drm_crtc *crtc)
+{
+	struct drm_device *dev = crtc->dev;
+	struct virtio_gpu_device *vgdev = dev->dev_private;
+	struct virtio_gpu_output *output = drm_crtc_to_virtio_gpu_output(crtc);
+	virtio_gpu_cmd_flush_sync(vgdev, output->index);
+	virtio_gpu_notify(vgdev);
 }
 
 static void virtio_gpu_crtc_atomic_flush(struct drm_crtc *crtc,
@@ -170,6 +193,11 @@ static void virtio_gpu_crtc_atomic_flush(struct drm_crtc *crtc,
 			crtc->state->event = NULL;
 		}
 	}
+	if(vgdev->has_multi_plane)
+		virtio_gpu_resource_flush_sync(crtc);
+
+	if(vgdev->has_scaling)
+		output->scaler_users = 0;
 
 	/*
 	 * virtio-gpu can't do modeset and plane update operations
@@ -314,12 +342,25 @@ static int vgdev_output_init(struct virtio_gpu_device *vgdev, int index)
 		output->info.r.height = cpu_to_le32(YRES_DEF);
 	}
 
+	if(vgdev->has_scaling)
+		output->scaler_users = 0;
 	primary = virtio_gpu_plane_init(vgdev, DRM_PLANE_TYPE_PRIMARY, index);
 	if (IS_ERR(primary))
 		return PTR_ERR(primary);
 	cursor = virtio_gpu_plane_init(vgdev, DRM_PLANE_TYPE_CURSOR, index);
 	if (IS_ERR(cursor))
 		return PTR_ERR(cursor);
+
+	if(vgdev->has_multi_plane) {
+		struct drm_plane *sprite;
+		int i;
+		for(i=0; i< vgdev->outputs[index].plane_num; i++) {
+			sprite = virtio_gpu_plane_init(vgdev, DRM_PLANE_TYPE_OVERLAY, index);
+			if (IS_ERR(sprite))
+				return PTR_ERR(sprite);
+		}
+	}
+
 	drm_crtc_init_with_planes(dev, crtc, primary, cursor,
 				  &virtio_gpu_crtc_funcs, NULL);
 	drm_crtc_helper_add(crtc, &virtio_gpu_crtc_helper_funcs);
