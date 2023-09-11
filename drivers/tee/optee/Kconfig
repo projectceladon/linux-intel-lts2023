@@ -2,7 +2,7 @@
 # OP-TEE Trusted Execution Environment Configuration
 config OPTEE
 	tristate "OP-TEE"
-	depends on HAVE_ARM_SMCCC
+	depends on HAVE_ARM_SMCCC || X86_64
 	depends on MMU
 	help
 	  This implements the OP-TEE Trusted Execution Environment (TEE)
@@ -21,4 +21,28 @@ config OPTEE_BENCHMARK
 	depends on OPTEE
 	help
 	  This enables benchmarking feature in the OP-TEE Trusted
+	  Execution Environment (TEE) driver. Not supported on x86_64.
+
+config OPTEE_HV_IKGT
+	bool "OP-TEE on top of IKGT hypervisor"
+	depends on OPTEE
+	depends on X86_64
+	help
+	  This enables IKGT based SMC in the OP-TEE Trusted
+	  Execution Environment (TEE) driver.
+
+config OPTEE_VSOCK
+	bool "OP-TEE SMC based on VSOCK"
+	depends on OPTEE
+	depends on X86_64
+	help
+	  This enables VSOCK based SMC in the OP-TEE Trusted
+	  Execution Environment (TEE) driver.
+
+config OPTEE_IVSHMEM
+	bool "OP-TEE SMC based on IVSHMEM"
+	depends on OPTEE
+	depends on X86_64
+	help
+	  This enables IVSHMEM based SMC in the OP-TEE Trusted
 	  Execution Environment (TEE) driver.
