@@ -11,6 +11,10 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
+#if defined(CONFIG_OPTEE_IVSHMEM)
+#include <linux/pci.h>
+#include <linux/pci_regs.h>
+#endif
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/string.h>
@@ -18,6 +22,11 @@
 #include <linux/types.h>
 #include <linux/uaccess.h>
 #include <linux/workqueue.h>
+#if defined(CONFIG_OPTEE_VSOCK)
+#include <linux/semaphore.h>
+#include <net/sock.h>
+#include <uapi/linux/vm_sockets.h>
+#endif
 #include "optee_bench.h"
 #include "optee_private.h"
 #include "optee_smc.h"
@@ -26,6 +35,102 @@
 #define DRIVER_NAME "optee"
 
 #define OPTEE_SHM_NUM_PRIV_PAGES	CONFIG_OPTEE_SHM_NUM_PRIV_PAGES
+
+#if defined(CONFIG_OPTEE_HV_IKGT)
+#define OPTEE_VMCALL_SMC       0x6F707400
+#endif
+
+#if defined(CONFIG_OPTEE_VSOCK)
+#define VIRTIO_SHM_COPY_REQ 	0x5a5a5a5a
+#define VIRTIO_SMC_BUFFER_LEN	0x40
+#define VIRTIO_VSOCK_BUFF_LEN	0x10000
+#define VIRTIO_VSOCK_TEE_PORT	1234
+
+static struct socket *host_smc_sock = NULL;
+static struct socket *tee_sock = NULL;
+unsigned long optee_shm_offset = 0;
+
+static DEFINE_SEMAPHORE(optee_smc_lock);
+#endif
+
+#if defined(CONFIG_OPTEE_IVSHMEM)
+#define PCI_DRV_NAME	"optee-ivshmem"
+
+#define IVPOSITION_OFF	0x08
+#define DOORBELL_OFF	0x0C
+
+#define OPTEE_SHM_QUEUE_SIZE	64
+
+#define OPTEE_HANDLE_DONE	0xa5a5a5a5
+
+#define OPTEE_SHM_SMC_SIZE	0x200000
+
+struct ivshmem_private {
+	struct pci_dev *dev;
+
+	u8                  revision;
+	u32                 ivposition;
+
+	u8 __iomem          *regs_addr;
+	u8                  *base_addr;
+	u32                 *msix_addr;
+
+	unsigned long       bar0_addr;
+	unsigned long       bar0_len;
+	unsigned long       bar1_addr;
+	unsigned long       bar1_len;
+	unsigned long       bar2_addr;
+	unsigned long       bar2_len;
+
+	char                (*msix_names)[256];
+	struct msix_entry   *msix_entries;
+	int                 nvectors;
+};
+
+static struct ivshmem_private g_ivshmem_dev;
+
+static struct pci_device_id ivshmem_id_table[] = {
+    { 0x1af4, 0x1110, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
+    { 0 },
+};
+MODULE_DEVICE_TABLE(pci, ivshmem_id_table);
+
+struct optee_smc_args {
+	u64 a0;
+	u64 a1;
+	u64 a2;
+	u64 a3;
+	u64 a4;
+	u64 a5;
+	u64 a6;
+	u64 a7;
+	u64 a8;
+} __packed;
+
+struct optee_vm_ids {
+	u32 ree_id;
+	u32 tee_id;
+} __packed;
+
+struct optee_smc_ring {
+	u16 head;
+	u16 tail;
+	u16 ring[OPTEE_SHM_QUEUE_SIZE];
+} __packed;
+
+static struct optee_smc_args *g_smc_args = NULL;
+static struct optee_smc_ring *g_smc_avail_ring = NULL;
+static struct optee_smc_ring *g_smc_used_ring = NULL;
+static struct optee_vm_ids *g_smc_vm_ids = NULL;
+
+unsigned long optee_shm_offset = 0;
+
+//spinlock used to protect SMC ring operations
+static DEFINE_SPINLOCK(smc_ring_lock);
+
+//SMC wait queue, waiting for interrupt from TEE
+static DECLARE_WAIT_QUEUE_HEAD(optee_smc_queue);
+#endif
 
 /**
  * optee_from_msg_param() - convert from OPTEE_MSG parameters to
@@ -42,6 +147,9 @@ int optee_from_msg_param(struct tee_param *params, size_t num_params,
 	size_t n;
 	struct tee_shm *shm;
 	phys_addr_t pa;
+#if defined(CONFIG_OPTEE_VSOCK)
+	void *va = NULL;
+#endif
 
 	for (n = 0; n < num_params; n++) {
 		struct tee_param *p = params + n;
@@ -78,6 +186,23 @@ int optee_from_msg_param(struct tee_param *params, size_t num_params,
 			rc = tee_shm_get_pa(shm, 0, &pa);
 			if (rc)
 				return rc;
+#if defined(CONFIG_OPTEE_VSOCK)
+			pa = pa - optee_shm_offset;
+			//Here we don't distinguish output or input attribute, just copy
+			if (mp->u.tmem.size < VIRTIO_VSOCK_BUFF_LEN) {
+				va = tee_shm_get_va(shm, mp->u.tmem.buf_ptr - pa);
+				if (!va)
+					return -EINVAL;
+				rc = copy_shm(va, mp->u.tmem.buf_ptr, mp->u.tmem.size);
+				if (rc < 0) {
+					pr_err("%s: copy_shm 0x%llx/0x%llx failed\n", __func__,
+						mp->u.tmem.buf_ptr, mp->u.tmem.size);
+					return -EINVAL;
+				}
+			}
+#elif defined(CONFIG_OPTEE_IVSHMEM)
+			pa = pa - optee_shm_offset;
+#endif
 			p->u.memref.shm_offs = mp->u.tmem.buf_ptr - pa;
 			p->u.memref.shm = shm;
 			break;
@@ -127,6 +252,9 @@ static int to_msg_param_tmp_mem(struct optee_msg_param *mp,
 	rc = tee_shm_get_pa(p->u.memref.shm, p->u.memref.shm_offs, &pa);
 	if (rc)
 		return rc;
+#if defined(CONFIG_OPTEE_VSOCK) || defined(CONFIG_OPTEE_IVSHMEM)
+	pa = pa - optee_shm_offset;
+#endif
 
 	mp->u.tmem.buf_ptr = pa;
 	mp->attr |= OPTEE_MSG_ATTR_CACHE_PREDEFINED <<
@@ -299,6 +427,9 @@ static void optee_release(struct tee_context *ctx)
 			memset(arg, 0, sizeof(*arg));
 			arg->cmd = OPTEE_MSG_CMD_CLOSE_SESSION;
 			arg->session = sess->session_id;
+#if defined(CONFIG_OPTEE_VSOCK)
+			arg->num_params = 0;
+#endif
 			optee_do_call_with_arg(ctx, parg);
 		}
 		kfree(sess);
@@ -487,19 +618,37 @@ optee_config_shm_memremap(optee_invoke_fn *invoke_fn, void **memremaped_shm)
 
 	begin = roundup(res.result.start, PAGE_SIZE);
 	end = rounddown(res.result.start + res.result.size, PAGE_SIZE);
-	paddr = begin;
 	size = end - begin;
+
+#if defined(CONFIG_OPTEE_VSOCK)
+	va = kmalloc(size, GFP_KERNEL);
+	if (!va) {
+		pr_err("shared memory 0x%lx kmalloc failed\n", size);
+		return ERR_PTR(-EINVAL);
+	}
+	paddr = virt_to_phys(va);
+	optee_shm_offset = paddr - begin;
+#elif defined(CONFIG_OPTEE_IVSHMEM)
+	paddr = g_ivshmem_dev.bar2_addr + OPTEE_SHM_SMC_SIZE;
+	optee_shm_offset = paddr - begin;
+	pr_info("shared memory from tee 0x%llx/0x%lx/0x%llx/0x%lx\n",
+		begin, size, paddr, optee_shm_offset);
+#else
+	paddr = begin;
+#endif
 
 	if (size < 2 * OPTEE_SHM_NUM_PRIV_PAGES * PAGE_SIZE) {
 		pr_err("too small shared memory area\n");
 		return ERR_PTR(-EINVAL);
 	}
 
+#if !defined(CONFIG_OPTEE_VSOCK)
 	va = memremap(paddr, size, MEMREMAP_WB);
 	if (!va) {
 		pr_err("shared memory ioremap failed\n");
 		return ERR_PTR(-EINVAL);
 	}
+#endif
 	vaddr = (unsigned long)va;
 
 	rc = tee_shm_pool_mgr_alloc_res_mem(vaddr, paddr, sz,
@@ -535,6 +684,193 @@ err_memunmap:
 }
 
 /* Simple wrapper functions to be able to use a function pointer */
+
+#if defined(CONFIG_OPTEE_HV_IKGT)
+struct optee_smc_interface {
+    unsigned long args[5];
+};
+
+static long optee_smc(void *args)
+{
+    struct optee_smc_interface *p_args = args;
+    __asm__ __volatile__(
+	"vmcall;"
+	: "=D"(p_args->args[0]), "=S"(p_args->args[1]),
+	"=d"(p_args->args[2]), "=b"(p_args->args[3])
+	: "a"(OPTEE_VMCALL_SMC), "D"(p_args->args[0]), "S"(p_args->args[1]),
+	"d"(p_args->args[2]), "b"(p_args->args[3]), "c"(p_args->args[4])
+	);
+
+	return 0;
+}
+
+/* Simple wrapper functions to be able to use a function pointer */
+static void optee_smccc_smc(unsigned long a0, unsigned long a1,
+			    unsigned long a2, unsigned long a3,
+			    unsigned long a4, unsigned long a5,
+			    unsigned long a6, unsigned long a7,
+			    struct arm_smccc_res *res)
+{
+	int ret = 0;
+	struct optee_smc_interface s;
+
+	s.args[0] = a0;
+	s.args[1] = a1;
+	s.args[2] = a2;
+	s.args[3] = a3;
+	//TODO: use two registers to save a4 and a5 seperately later.
+	s.args[4] = a5 << 32 | a4;
+
+	ret = work_on_cpu(0, optee_smc, (void *)&s);
+	if (ret) {
+		pr_err("%s: work_on_cpu failed: %d\n", __func__, ret);
+	}
+
+	res->a0 = s.args[0];
+	res->a1 = s.args[1];
+	res->a2 = s.args[2];
+	res->a3 = s.args[3];
+}
+#elif defined(CONFIG_OPTEE_VSOCK)
+static void optee_smccc_smc(unsigned long a0, unsigned long a1,
+			    unsigned long a2, unsigned long a3,
+			    unsigned long a4, unsigned long a5,
+			    unsigned long a6, unsigned long a7,
+			    struct arm_smccc_res *res)
+{
+	struct msghdr msg;
+	unsigned long buffer[8];
+	struct kvec iov[2];
+	int rc;
+
+	if (down_interruptible(&optee_smc_lock)) {
+		pr_warn("optee_smccc_smc not get lock\n");
+		return;
+	}
+
+	buffer[0] = a0;
+	buffer[1] = a1;
+	buffer[2] = a2;
+	buffer[3] = a3;
+	buffer[4] = a4;
+	buffer[5] = a5;
+	buffer[6] = a6;
+	buffer[7] = a7;
+
+	memset(&msg, 0, sizeof(msg));
+	iov[0].iov_base = buffer;
+	iov[0].iov_len = VIRTIO_SMC_BUFFER_LEN;
+	if (a0 == OPTEE_SMC_RETURN_RPC_COPY_SHM) {
+		iov[1].iov_base = phys_to_virt(a1 + optee_shm_offset);
+		iov[1].iov_len = a2;
+		buffer[0] = OPTEE_SMC_CALL_RETURN_FROM_RPC;
+		rc = kernel_sendmsg(tee_sock, &msg, iov, 2, (a2 + VIRTIO_SMC_BUFFER_LEN));
+	} else {
+		rc = kernel_sendmsg(tee_sock, &msg, iov, 1, VIRTIO_SMC_BUFFER_LEN);
+	}
+
+	memset(&msg, 0, sizeof(msg));
+	iov[0].iov_base = buffer;
+	iov[0].iov_len = VIRTIO_SMC_BUFFER_LEN;
+	rc = kernel_recvmsg(tee_sock, &msg, iov, 1, VIRTIO_SMC_BUFFER_LEN, MSG_WAITFORONE);
+
+	memcpy(res, buffer, sizeof(struct arm_smccc_res));
+
+	up(&optee_smc_lock);
+}
+
+int copy_shm(void* data, phys_addr_t paddr, size_t size)
+{
+	struct msghdr msg;
+	unsigned long buffer[8];
+	struct kvec iov[2];
+	int rc;
+
+	if (down_interruptible(&optee_smc_lock)) {
+		pr_warn("copy_shm not get lock\n");
+		return -EINVAL;
+	}
+
+	buffer[0] = VIRTIO_SHM_COPY_REQ;
+	buffer[1] = paddr;
+	buffer[2] = size;
+	buffer[3] = 0;
+	buffer[4] = 0;
+	buffer[5] = 0;
+	buffer[6] = 0;
+	buffer[7] = 0;
+
+	memset(&msg, 0, sizeof(msg));
+	iov[0].iov_base = buffer;
+	iov[0].iov_len = VIRTIO_SMC_BUFFER_LEN;
+	rc = kernel_sendmsg(tee_sock, &msg, iov, 1, VIRTIO_SMC_BUFFER_LEN);
+	if (rc < 0)
+		goto err;
+
+	memset(&msg, 0, sizeof(msg));
+	iov[1].iov_base = data;
+	iov[1].iov_len = size;
+	rc = kernel_recvmsg(tee_sock, &msg, iov, 2, (size + VIRTIO_SMC_BUFFER_LEN), MSG_WAITFORONE);
+
+err:
+	up(&optee_smc_lock);
+	return rc;
+}
+#elif defined(CONFIG_OPTEE_IVSHMEM)
+static void optee_smccc_smc(unsigned long a0, unsigned long a1,
+			    unsigned long a2, unsigned long a3,
+			    unsigned long a4, unsigned long a5,
+			    unsigned long a6, unsigned long a7,
+			    struct arm_smccc_res *res)
+{
+	u16 index = 0;
+
+	spin_lock(&smc_ring_lock);
+
+	index = g_smc_avail_ring->ring[g_smc_avail_ring->head];
+	if (index == OPTEE_SHM_QUEUE_SIZE) {
+		//avail ring is empty
+		spin_unlock(&smc_ring_lock);
+		res->a0 = OPTEE_SMC_RETURN_ETHREAD_LIMIT;
+		return;
+	}
+
+	g_smc_avail_ring->ring[g_smc_avail_ring->head] = OPTEE_SHM_QUEUE_SIZE;
+
+	g_smc_avail_ring->head = (g_smc_avail_ring->head + 1) % OPTEE_SHM_QUEUE_SIZE;
+
+	spin_unlock(&smc_ring_lock);
+
+	g_smc_args[index].a0  = a0;
+	g_smc_args[index].a1  = a1;
+	g_smc_args[index].a2  = a2;
+	g_smc_args[index].a3  = a3;
+	g_smc_args[index].a4  = a4;
+	g_smc_args[index].a5  = a5;
+	g_smc_args[index].a6  = a6;
+	g_smc_args[index].a7  = a7;
+
+	spin_lock(&smc_ring_lock);
+	g_smc_used_ring->ring[g_smc_used_ring->tail] = index;
+	g_smc_used_ring->tail = (g_smc_used_ring->tail + 1) % OPTEE_SHM_QUEUE_SIZE;
+	spin_unlock(&smc_ring_lock);
+
+	writel(g_smc_vm_ids->tee_id << 16, g_ivshmem_dev.regs_addr + DOORBELL_OFF);
+
+	wait_event_interruptible(optee_smc_queue, (g_smc_args[index].a8 == OPTEE_HANDLE_DONE));
+
+	g_smc_args[index].a8 = 0x0;
+	res->a0 = g_smc_args[index].a0;
+	res->a1 = g_smc_args[index].a1;
+	res->a2 = g_smc_args[index].a2;
+	res->a3 = g_smc_args[index].a3;
+
+	spin_lock(&smc_ring_lock);
+	g_smc_avail_ring->ring[g_smc_avail_ring->tail] = index;
+	g_smc_avail_ring->tail = (g_smc_avail_ring->tail + 1) % OPTEE_SHM_QUEUE_SIZE;
+	spin_unlock(&smc_ring_lock);
+}
+#else
 static void optee_smccc_smc(unsigned long a0, unsigned long a1,
 			    unsigned long a2, unsigned long a3,
 			    unsigned long a4, unsigned long a5,
@@ -572,6 +908,7 @@ static optee_invoke_fn *get_invoke_func(struct device *dev)
 	pr_warn("invalid \"method\" property: %s\n", method);
 	return ERR_PTR(-EINVAL);
 }
+#endif
 
 static int optee_remove(struct platform_device *pdev)
 {
@@ -593,7 +930,11 @@ static int optee_remove(struct platform_device *pdev)
 
 	tee_shm_pool_free(optee->pool);
 	if (optee->memremaped_shm)
+#if defined(CONFIG_OPTEE_VSOCK)
+		kfree(optee->memremaped_shm);
+#else
 		memunmap(optee->memremaped_shm);
+#endif
 	optee_wait_queue_exit(&optee->wait_queue);
 	optee_supp_uninit(&optee->supp);
 	mutex_destroy(&optee->call_queue.mutex);
@@ -601,6 +942,12 @@ static int optee_remove(struct platform_device *pdev)
 	kfree(optee);
 
 	optee_bm_disable();
+
+#if defined(CONFIG_OPTEE_VSOCK)
+	sock_release(tee_sock);
+	sock_release(host_smc_sock);
+#endif
+
 	return 0;
 }
 
@@ -614,7 +961,53 @@ static int optee_probe(struct platform_device *pdev)
 	u32 sec_caps;
 	int rc;
 
+#if defined(CONFIG_X86_64)
+#if defined(CONFIG_OPTEE_VSOCK)
+	union {
+		struct sockaddr sa;
+		struct sockaddr_vm svm;
+	} smc_addr = {
+		.svm = {
+			.svm_family = AF_VSOCK,
+			.svm_port = VIRTIO_VSOCK_TEE_PORT,
+			.svm_cid = VMADDR_CID_ANY,
+		},
+	};
+
+	rc = sock_create_kern(&init_net, AF_VSOCK, SOCK_STREAM, 0, &host_smc_sock);
+	if (rc) {
+		pr_warn("host_smc_sock create failed\n");
+		goto err_release_sock;
+	}
+
+	rc = kernel_bind(host_smc_sock, &smc_addr.sa, sizeof(smc_addr));
+	if (rc) {
+		pr_warn("host_smc_sock bind failed 0x%x\n", rc);
+		goto err_release_sock;
+	}
+
+	rc = kernel_listen(host_smc_sock, 32); 
+	if (rc) {
+		pr_warn("host_smc_sock listen failed 0x%x\n", rc);
+		goto err_release_sock;
+	}
+
+	rc = kernel_accept(host_smc_sock, &tee_sock, 0); 
+	if (rc) {
+		pr_warn("host_smc_sock accept failed 0x%x\n", rc);
+		goto err_release_sock;
+	}
+#elif defined(CONFIG_OPTEE_IVSHMEM)
+	if (g_ivshmem_dev.dev == NULL) {
+		pr_warn("ivshmem not found\n");
+		return -EINVAL;
+	}
+#endif
+	invoke_fn = optee_smccc_smc;
+#else
 	invoke_fn = get_invoke_func(&pdev->dev);
+#endif
+
 	if (IS_ERR(invoke_fn))
 		return PTR_ERR(invoke_fn);
 
@@ -715,13 +1108,331 @@ err:
 		tee_device_unregister(optee->teedev);
 		kfree(optee);
 	}
-	if (pool)
+	if (pool) {
+		pr_warn("tee_shm_pool_free start\n");
 		tee_shm_pool_free(pool);
+	}
 	if (memremaped_shm)
+#if defined(CONFIG_OPTEE_VSOCK)
+		kfree(memremaped_shm);
+#else
 		memunmap(memremaped_shm);
+#endif
+#if defined(CONFIG_OPTEE_VSOCK)
+err_release_sock:
+	if (tee_sock)
+		sock_release(tee_sock);
+	if (host_smc_sock)
+		sock_release(host_smc_sock);
+#endif
 	return rc;
 }
 
+#if defined(CONFIG_X86_64)
+void optee_dev_release(struct device *dev)
+{
+	return;
+}
+
+static struct platform_device optee_platform_dev = {
+		.name = "optee-tz",
+		.id = -1,
+		.dev = {
+			.release = optee_dev_release,
+	},
+};
+
+static struct platform_driver optee_driver = {
+	.probe  = optee_probe,
+	.remove = optee_remove,
+	.driver = {
+		.name = "optee-tz",
+		.owner = THIS_MODULE,
+	},
+};
+
+#if defined(CONFIG_OPTEE_IVSHMEM)
+static irqreturn_t ivshmem_interrupt(int irq, void *dev_id)
+{
+	struct ivshmem_private *ivshmem_dev = dev_id;
+
+	if (unlikely(ivshmem_dev == NULL)) {
+		return IRQ_NONE;
+	}
+
+	wake_up_interruptible(&optee_smc_queue);
+
+	return IRQ_HANDLED;
+}
+
+static int ivshmem_request_msix_vectors(struct ivshmem_private *ivshmem_dev, int n)
+{
+	int ret = -EINVAL, i = 0;
+
+	pr_info("ivshmem request msi-x vectors: %d\n", n);
+
+	ivshmem_dev->nvectors = n;
+
+	ivshmem_dev->msix_entries = kmalloc(n * sizeof(struct msix_entry),
+			GFP_KERNEL);
+	if (ivshmem_dev->msix_entries == NULL) {
+		ret = -ENOMEM;
+		goto error;
+	}
+	
+	ivshmem_dev->msix_names = kmalloc(n * sizeof(*ivshmem_dev->msix_names),
+			GFP_KERNEL);
+	if (ivshmem_dev->msix_names == NULL) {
+		ret = -ENOMEM;
+		goto free_entries;
+	}
+
+	for (i = 0; i < n; i++) {
+		ivshmem_dev->msix_entries[i].entry = i;
+	}
+
+	ret = pci_enable_msix_exact(ivshmem_dev->dev, ivshmem_dev->msix_entries, n);
+	if (ret) {
+		pr_err("ivshmem unable to enable msix: %d\n", ret);
+		goto free_names;
+	}
+
+	for (i = 0; i < ivshmem_dev->nvectors; i++) {
+		snprintf(ivshmem_dev->msix_names[i], sizeof(*ivshmem_dev->msix_names),
+				"%s-%d", PCI_DRV_NAME, i);
+
+		ret = request_irq(ivshmem_dev->msix_entries[i].vector,
+				ivshmem_interrupt, 0, ivshmem_dev->msix_names[i], ivshmem_dev);
+
+		if (ret) {
+			pr_err("ivshmem unable to allocate irq for msix entry %d with vector %d\n",
+					i, ivshmem_dev->msix_entries[i].vector);
+			goto release_irqs;
+		}
+
+		pr_info("ivshmem irq for msix entry: %d, vector: %d\n",
+				i, ivshmem_dev->msix_entries[i].vector);
+	}
+
+    return 0;
+
+release_irqs:
+	for ( ; i > 0; i--) {
+		free_irq(ivshmem_dev->msix_entries[i - 1].vector, ivshmem_dev);
+	}
+	pci_disable_msix(ivshmem_dev->dev);
+
+free_names:
+	kfree(ivshmem_dev->msix_names);
+
+free_entries:
+	kfree(ivshmem_dev->msix_entries);
+
+error:
+	return ret;
+}
+
+static void ivshmem_free_msix_vectors(struct ivshmem_private *ivshmem_dev)
+{
+	int i;
+
+	for (i = ivshmem_dev->nvectors; i > 0; i--) {
+		free_irq(ivshmem_dev->msix_entries[i - 1].vector, ivshmem_dev);
+	}
+	pci_disable_msix(ivshmem_dev->dev);
+
+	kfree(ivshmem_dev->msix_names);
+	kfree(ivshmem_dev->msix_entries);
+}
+
+static int ivshmem_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+{
+	int ret;
+	int i;
+
+	pr_info("probing for ivshmem device: %s\n", pci_name(pdev));
+
+	ret = pci_enable_device(pdev);
+	if (ret < 0) {
+		pr_err("unable to enable ivshmem device: %d\n", ret);
+		goto out;
+	}
+
+	ret = pci_request_regions(pdev, PCI_DRV_NAME);
+	if (ret < 0) {
+		pr_err("unable to reserve resources for ivshmem: %d\n", ret);
+		goto disable_device;
+	}
+
+	pci_read_config_byte(pdev, PCI_REVISION_ID, &g_ivshmem_dev.revision);
+
+	pr_info("ivshmem device revision: %d\n", g_ivshmem_dev.revision);
+
+	g_ivshmem_dev.bar0_addr = pci_resource_start(pdev, 0);
+	g_ivshmem_dev.bar0_len = pci_resource_len(pdev, 0);
+	g_ivshmem_dev.bar1_addr = pci_resource_start(pdev, 1);
+	g_ivshmem_dev.bar1_len = pci_resource_len(pdev, 1);
+	g_ivshmem_dev.bar2_addr = pci_resource_start(pdev, 2);
+	g_ivshmem_dev.bar2_len = pci_resource_len(pdev, 2);
+
+	pr_info("ivshmem BAR0: 0x%lx, %ld\n", g_ivshmem_dev.bar0_addr,
+			g_ivshmem_dev.bar0_len);
+	pr_info("ivshmem BAR1: 0x%lx, %ld\n", g_ivshmem_dev.bar1_addr,
+			g_ivshmem_dev.bar1_len);
+	pr_info("ivshmem BAR2: 0x%lx, %ld\n", g_ivshmem_dev.bar2_addr,
+			g_ivshmem_dev.bar2_len);
+
+	g_ivshmem_dev.regs_addr = ioremap(g_ivshmem_dev.bar0_addr, g_ivshmem_dev.bar0_len);
+	if (!g_ivshmem_dev.regs_addr) {
+		pr_err("ivshmem unable to ioremap bar0, size: %ld\n", g_ivshmem_dev.bar0_len);
+		goto release_regions;
+	}
+
+	g_ivshmem_dev.msix_addr = (u32 *)memremap(g_ivshmem_dev.bar1_addr,
+		g_ivshmem_dev.bar1_len, MEMREMAP_WT);
+	if (!g_ivshmem_dev.msix_addr) {
+		pr_err("msix memory ioremap failed\n");
+		goto iounmap_bar0;
+	}
+	pr_info("ivshmem msix entry 0 1st: 0x%x/0x%x/0x%x/0x%x\n",
+		*(g_ivshmem_dev.msix_addr), *(g_ivshmem_dev.msix_addr+1),
+		*(g_ivshmem_dev.msix_addr+2), *(g_ivshmem_dev.msix_addr+3));
+
+	g_ivshmem_dev.base_addr = (u8 *)memremap(g_ivshmem_dev.bar2_addr,
+		OPTEE_SHM_SMC_SIZE, MEMREMAP_WT);
+	if (!g_ivshmem_dev.base_addr) {
+		pr_err("base memory ioremap failed\n");
+		goto iounmap_bar1;
+	}
+	pr_info("ivshmem BAR2 map: 0x%llx\n", (u64)g_ivshmem_dev.base_addr);
+
+	g_smc_vm_ids = (struct optee_vm_ids *)g_ivshmem_dev.base_addr;
+	g_smc_avail_ring = (struct optee_smc_ring *)(g_ivshmem_dev.base_addr +
+		sizeof(struct optee_vm_ids));
+	g_smc_used_ring = (struct optee_smc_ring *)(g_ivshmem_dev.base_addr +
+		sizeof(struct optee_vm_ids) + sizeof(struct optee_smc_ring));
+	g_smc_args = (struct optee_smc_args *)(g_ivshmem_dev.base_addr +
+		sizeof(struct optee_vm_ids) + sizeof(struct optee_smc_ring) +
+		sizeof(struct optee_smc_ring));
+	g_smc_avail_ring->head = 0;
+	g_smc_avail_ring->tail = 0;
+	for (i = 0; i < OPTEE_SHM_QUEUE_SIZE; i++) {
+		g_smc_avail_ring->ring[i] = i;
+	}
+	g_smc_used_ring->head = 0;
+	g_smc_used_ring->tail = 0;
+	for (i = 0; i < OPTEE_SHM_QUEUE_SIZE; i++) {
+		g_smc_used_ring->ring[i] = OPTEE_SHM_QUEUE_SIZE;
+	}
+
+	g_ivshmem_dev.dev = pdev;
+
+	if (g_ivshmem_dev.revision == 1) {
+		g_ivshmem_dev.ivposition = ioread32(g_ivshmem_dev.regs_addr + IVPOSITION_OFF);
+		g_smc_vm_ids->ree_id = g_ivshmem_dev.ivposition;
+		pr_info("ivshmem device ree id=%d, tee id=%d\n",
+				g_smc_vm_ids->ree_id, g_smc_vm_ids->tee_id);
+
+		pr_info("ivshmem device ivposition: %u, MSI-X: %s\n", g_ivshmem_dev.ivposition,
+				(g_ivshmem_dev.ivposition == 0) ? "no": "yes");
+
+		if (g_ivshmem_dev.ivposition != 0) {
+			ret = ivshmem_request_msix_vectors(&g_ivshmem_dev, 1);
+			if (ret != 0) {
+				goto destroy_device;
+			}
+		}
+		pr_info("ivshmem msix entry 0 2nd: 0x%x/0x%x/0x%x/0x%x\n",
+		*(g_ivshmem_dev.msix_addr), *(g_ivshmem_dev.msix_addr+1),
+		*(g_ivshmem_dev.msix_addr+2), *(g_ivshmem_dev.msix_addr+3));
+	}
+
+	pr_info("ivshmem device probed: %s\n", pci_name(pdev));
+	return 0;
+
+destroy_device:
+	g_ivshmem_dev.dev = NULL;
+	memunmap(g_ivshmem_dev.base_addr);
+
+iounmap_bar1:
+	memunmap(g_ivshmem_dev.msix_addr);
+
+iounmap_bar0:
+	iounmap(g_ivshmem_dev.regs_addr);
+
+release_regions:
+	pci_release_regions(pdev);
+
+disable_device:
+	pci_disable_device(pdev);
+
+out:
+    return ret;
+}
+
+static void ivshmem_remove(struct pci_dev *pdev)
+{
+	pr_info("removing for ivshmem device: %s\n", pci_name(pdev));
+
+	ivshmem_free_msix_vectors(&g_ivshmem_dev);
+
+	g_ivshmem_dev.dev = NULL;
+
+	memunmap(g_ivshmem_dev.base_addr);
+	memunmap(g_ivshmem_dev.msix_addr);
+	iounmap(g_ivshmem_dev.regs_addr);
+
+	pci_release_regions(pdev);
+	pci_disable_device(pdev);
+}
+
+static struct pci_driver ivshmem_driver = {
+	.name       = PCI_DRV_NAME,
+	.id_table   = ivshmem_id_table,
+	.probe      = ivshmem_probe,
+	.remove     = ivshmem_remove,
+};
+#endif
+
+static int __init optee_drv_init(void)
+{
+	int ret = 0;
+
+#if defined(CONFIG_OPTEE_IVSHMEM)
+	ret = pci_register_driver(&ivshmem_driver);
+	if (ret) {
+		pr_err("pci_register_driver() failed, ret %d\n", ret);
+		return ret;
+	}
+#endif
+
+	ret = platform_device_register(&optee_platform_dev);
+	if (ret) {
+		pr_err("platform_device_register() failed, ret %d\n", ret);
+		return ret;
+	}
+
+	ret = platform_driver_probe(&optee_driver, optee_probe);
+	if (ret)
+		pr_err("platform_driver_probe() failed, ret %d\n", ret);
+
+	return ret;
+}
+
+static void __exit optee_drv_exit(void)
+{
+	platform_driver_unregister(&optee_driver);
+
+	platform_device_unregister(&optee_platform_dev);
+
+#if defined(CONFIG_OPTEE_IVSHMEM)
+	pci_unregister_driver(&ivshmem_driver);
+#endif
+}
+
+module_init(optee_drv_init);
+module_exit(optee_drv_exit);
+#else
 static const struct of_device_id optee_dt_match[] = {
 	{ .compatible = "linaro,optee-tz" },
 	{},
@@ -737,6 +1448,7 @@ static struct platform_driver optee_driver = {
 	},
 };
 module_platform_driver(optee_driver);
+#endif
 
 MODULE_AUTHOR("Linaro");
 MODULE_DESCRIPTION("OP-TEE driver");

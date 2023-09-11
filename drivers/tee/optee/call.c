@@ -18,6 +18,14 @@
 #include "optee_trace.h"
 #include "optee_bench.h"
 
+#if defined(CONFIG_X86_64)
+#include <asm/io.h>
+#endif
+
+#if defined(CONFIG_OPTEE_VSOCK) || defined(CONFIG_OPTEE_IVSHMEM)
+extern unsigned long optee_shm_offset;
+#endif
+
 struct optee_call_waiter {
 	struct list_head list_node;
 	struct completion c;
@@ -133,6 +141,15 @@ u32 optee_do_call_with_arg(struct tee_context *ctx, phys_addr_t parg)
 	struct optee_rpc_param param = { };
 	struct optee_call_ctx call_ctx = { };
 	u32 ret;
+#if defined(CONFIG_OPTEE_VSOCK)
+	struct optee_msg_arg *msg_arg = (struct optee_msg_arg *) phys_to_virt(parg);
+	size_t arg_size = OPTEE_MSG_GET_ARG_SIZE(msg_arg->num_params);
+
+	param.a3 = arg_size;
+	parg = parg - optee_shm_offset;
+#elif defined(CONFIG_OPTEE_IVSHMEM)
+	parg = parg - optee_shm_offset;
+#endif
 
 	param.a0 = OPTEE_SMC_CALL_WITH_ARG;
 	reg_pair_from_64(&param.a1, &param.a2, parg);
@@ -176,6 +193,19 @@ u32 optee_do_call_with_arg(struct tee_context *ctx, phys_addr_t parg)
 	 * thread waiters wake up one.
 	 */
 	optee_cq_wait_final(&optee->call_queue, &w);
+
+#if defined(CONFIG_OPTEE_VSOCK)
+	if (!ret) {
+		if (msg_arg->cmd == OPTEE_MSG_CMD_OPEN_SESSION ||
+			msg_arg->cmd == OPTEE_MSG_CMD_INVOKE_COMMAND ||
+			msg_arg->cmd == OPTEE_MSG_CMD_REGISTER_SHM ||
+			msg_arg->cmd == OPTEE_MSG_CMD_UNREGISTER_SHM)
+			if (copy_shm(msg_arg, parg, arg_size) < 0) {
+				pr_err("%s: copy_shm 0x%llx/0x%lx failed\n", __func__, parg, arg_size);
+				ret = OPTEE_SMC_RETURN_ENOTAVAIL;
+			}
+	}
+#endif
 
 	return ret;
 }
@@ -550,6 +580,9 @@ static bool is_normal_memory(pgprot_t p)
 		((pgprot_val(p) & L_PTE_MT_MASK) == L_PTE_MT_WRITEBACK));
 #elif defined(CONFIG_ARM64)
 	return (pgprot_val(p) & PTE_ATTRINDX_MASK) == PTE_ATTRINDX(MT_NORMAL);
+#elif defined(CONFIG_X86_64)
+	//TODO: will figure out how to implement it on x86 platform, return true for now.
+	return true;
 #else
 #error "Unuspported architecture"
 #endif
