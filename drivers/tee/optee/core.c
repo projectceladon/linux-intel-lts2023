@@ -849,6 +849,7 @@ static void optee_smccc_smc(unsigned long a0, unsigned long a1,
 	g_smc_args[index].a5  = a5;
 	g_smc_args[index].a6  = a6;
 	g_smc_args[index].a7  = a7;
+	g_smc_args[index].a8  = 0x0;
 
 	spin_lock(&smc_ring_lock);
 	g_smc_used_ring->ring[g_smc_used_ring->tail] = index;
@@ -1324,6 +1325,7 @@ static int ivshmem_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	for (i = 0; i < OPTEE_SHM_QUEUE_SIZE; i++) {
 		g_smc_used_ring->ring[i] = OPTEE_SHM_QUEUE_SIZE;
 	}
+	memset(g_smc_args, 0, sizeof(struct optee_smc_args) * OPTEE_SHM_QUEUE_SIZE);
 
 	g_ivshmem_dev.dev = pdev;
 
