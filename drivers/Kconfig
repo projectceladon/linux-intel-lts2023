@@ -135,6 +135,8 @@ source "drivers/dca/Kconfig"
 
 source "drivers/uio/Kconfig"
 
+source "drivers/ivshm/Kconfig"
+
 source "drivers/vfio/Kconfig"
 
 source "drivers/vlynq/Kconfig"

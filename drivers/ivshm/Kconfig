@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: GPL-2.0-only
+menuconfig IVSHM
+	tristate "Inter-VM Shared Memory drivers"
+	depends on MMU
+	select MEMORY_HOTPLUG_SPARSE
+	select MEMORY_HOTREMOVE
+	select ZONE_DEVICE
+	help
+	  Enable this to allow the inter-VM shared memory driver core code to be
+	  built.
+
+	  If you don't know what to do here, say N.
+
+if IVSHM
+
+config IVSHM_IVSHMEM
+	tristate "Driver for QEMU IVSHMEM"
+	depends on PCI
+	help
+	  Driver for QEMU IVSHMEM.
+
+config IVSHM_GUEST_SHM
+	tristate "Driver for QNX guest shm"
+	depends on PCI
+	help
+	  Driver for QNX guest shm.
+
+endif
