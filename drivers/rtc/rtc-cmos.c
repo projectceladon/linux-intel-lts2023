@@ -42,7 +42,7 @@
 #include <asm/processor.h>
 #include <linux/dmi.h>
 #endif
-
+#include "asm/hypervisor.h"
 /* this is for "generic access to PC-style RTC" using CMOS_READ/CMOS_WRITE */
 #include <linux/mc146818rtc.h>
 
@@ -1398,7 +1398,7 @@ static int cmos_pnp_probe(struct pnp_dev *pnp, const struct pnp_device_id *id)
 		 * don't define the IRQ. It should always be safe to
 		 * hardcode it on systems with a legacy PIC.
 		 */
-		if (nr_legacy_irqs())
+		if (nr_legacy_irqs() && !hypervisor_is_type(X86_HYPER_QNX))
 			irq = RTC_IRQ;
 #endif
 	} else {
