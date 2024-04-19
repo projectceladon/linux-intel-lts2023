@@ -170,7 +170,16 @@ static int virtio_gpu_sgt_to_mem_entry(struct virtio_gpu_device *vgdev,
 	struct scatterlist *sg;
 	int si;
 
-	bool use_dma_api = !virtio_has_dma_quirk(vgdev->vdev);
+	/**
+	 * TODO: We must always use DMA addresses for the following two reasons:
+	 *
+	 * 1. By design we are not allowed to access the struct page backing a
+	 *    scatter list, especially when config DMABUF_DEBUG is turned on in
+	 *    which case the addresses will be mangled by the core.
+	 * 2. DMA addresses are required for dGPU local memory sharing between
+	 *    host and guest.
+	 */
+	const bool use_dma_api = true;
 	if (use_dma_api)
 		*nents = table->nents;
 	else
@@ -219,6 +228,8 @@ struct drm_gem_object *virtgpu_gem_prime_import_sg_table(
 		return ERR_PTR(-ENODEV);
 	}
 
+	drm_info(dev, "%s: table = %p, orig_nents = %u, nents = %u\n",
+		__func__, table, table->orig_nents, table->nents);
 	obj = drm_gem_shmem_prime_import_sg_table(dev, attach, table);
 	if (IS_ERR(obj)) {
 		return ERR_CAST(obj);
