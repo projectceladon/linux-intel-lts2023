@@ -71,9 +71,11 @@
 /*
 *VIRTIO_GPU_CMD_SET_SCALING
 */
-#define VIRTIO_GPU_F_SCALING	6
+#define VIRTIO_GPU_F_SCALING             6
 
-#define VIRTIO_GPU_F_VBLANK     7
+#define VIRTIO_GPU_F_VBLANK              7
+
+#define VIRTIO_GPU_F_ALLOW_P2P           31
 
 enum virtio_gpu_ctrl_type {
 	VIRTIO_GPU_UNDEFINED = 0,

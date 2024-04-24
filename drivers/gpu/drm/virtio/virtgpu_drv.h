@@ -255,6 +255,7 @@ struct virtio_gpu_device {
 	bool has_modifier;
 	bool has_scaling;
 	bool has_vblank;
+	bool has_allow_p2p;
 	bool has_indirect;
 	bool has_resource_assign_uuid;
 	bool has_resource_blob;
