@@ -118,9 +118,9 @@ static int virtio_ivshmem_probe(struct pci_dev *pci_dev,
 	else
 		min_align = PAGES_PER_SECTION;
 	min_align = (min_align << PAGE_SHIFT);
-	section_addr = (paddr + (idx << 32)) + 0x1000;
+	section_addr = (GUEST_SHM_PADDR + (idx << 32)) + 0x1000;
 	section_addr = (section_addr + (min_align - 1)) & ~(min_align - 1);
-	section_sz = vi_data->fact->size * 0x1000 - ((section_addr - (paddr + (idx << 32))
+	section_sz = vi_data->fact->size * 0x1000 - ((section_addr - (GUEST_SHM_PADDR + (idx << 32))
 		- 0x1000 + (min_align - 1))  & ~(min_align - 1));
 	dev_info(&pci_dev->dev, "section_addr=%llx, section_sz: 0x%llx", section_addr, section_sz);
 

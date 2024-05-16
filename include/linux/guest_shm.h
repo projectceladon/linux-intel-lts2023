@@ -82,6 +82,7 @@ enum guest_shm_status {
 	GSS_DOES_NOT_EXIST,		/**< A find request failed */
 };
 
+#define GUEST_SHM_PADDR 0x1800000000
 /** Maximum number of clients allowed to connect to a shared memory region */
 #define GUEST_SHM_MAX_CLIENTS	16
 #define GUEST_INTR_STATUS_MASK  ((1u << GUEST_SHM_MAX_CLIENTS) - 1u)

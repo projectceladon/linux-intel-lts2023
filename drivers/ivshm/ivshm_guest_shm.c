@@ -112,10 +112,9 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	else
 		min_align = PAGES_PER_SECTION;
 	min_align = (min_align << PAGE_SHIFT);
-	idev->info.dev_mmio = (paddr + (idx << 32)) + 0x1000;
+	idev->info.dev_mmio = (GUEST_SHM_PADDR + (idx << 32)) + 0x1000;
 	idev->info.dev_mmio = (idev->info.dev_mmio + (min_align - 1)) & ~(min_align - 1);
-	idev->info.dev_mmio_len = idev->fact->size * 0x1000 -
-		((idev->info.dev_mmio - (paddr + (idx << 32))
+	idev->info.dev_mmio_len = idev->fact->size * 0x1000 - ((idev->info.dev_mmio - (GUEST_SHM_PADDR + (idx << 32))
 		- 0x1000 + (min_align - 1)) & ~(min_align - 1));
 	dev_info(&pdev->dev, "min_align: 0x%lx, mmio: 0x%llx, mmio_len: 0x%llx", min_align,
 		idev->info.dev_mmio, idev->info.dev_mmio_len);
