@@ -294,6 +294,19 @@ int lapic_get_maxlvt(void)
 /* i82489DX specific */
 #define		I82489DX_BASE_DIVIDER		(((0x2) << 18))
 
+/* Now QNX uses Core Base Frequency instead of nominal core crystal clock.
+ * We need to scale LVTT Initial Count by TSC/clock ratio. On RPL, it's 73 (2800MHZ / 38400000 Hz)
+ */
+static int qnx_lvtt_scale_factor = 1;
+
+static int __init qnx_lvtt_scale_factor_setup(char *str)
+{
+	if (hypervisor_is_type(X86_HYPER_QNX))
+		get_option(&str, &qnx_lvtt_scale_factor);
+	return 1;
+}
+__setup("qnx_lvtt_scale=", qnx_lvtt_scale_factor_setup);
+
 /*
  * This function sets up the local APIC timer, with a timeout of
  * 'clocks' APIC bus clock. During calibration we actually call
@@ -346,6 +359,7 @@ static void __setup_APIC_LVTT(unsigned int clocks, int oneshot, int irqen)
 		(tmp_value & ~(APIC_TDR_DIV_1 | APIC_TDR_DIV_TMBASE)) |
 		APIC_TDR_DIV_16);
 
+	clocks = (clocks * qnx_lvtt_scale_factor);
 	if (!oneshot)
 		apic_write(APIC_TMICT, clocks / APIC_DIVISOR);
 }
@@ -445,6 +459,7 @@ EXPORT_SYMBOL_GPL(setup_APIC_eilvt);
 static int lapic_next_event(unsigned long delta,
 			    struct clock_event_device *evt)
 {
+	delta = (delta * qnx_lvtt_scale_factor);
 	apic_write(APIC_TMICT, delta);
 	return 0;
 }
