@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+comment "VirtIO media platform drivers"
+
+config VIDEO_VIRTIO_CAMERA
+	tristate "VirtIO camera driver"
+	depends on V4L_PLATFORM_DRIVERS
+	depends on VIDEO_DEV
+	depends on VIRTIO
+	select VIDEOBUF2_DMA_SG
+	select VIRTIO_DMA_SHARED_BUFFER
+	help
+	  This driver provides support for VirtIO camera device. If you
+	  choose 'M' here, this module will be called virtio_camera.
