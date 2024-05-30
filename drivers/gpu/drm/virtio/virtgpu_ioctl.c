@@ -107,6 +107,9 @@ static int virtio_gpu_getparam_ioctl(struct drm_device *dev, void *data,
 	case VIRTGPU_PARAM_SUPPORTED_CAPSET_IDs:
 		value = vgdev->capset_id_mask;
 		break;
+	case VIRTGPU_PARAM_QUERY_DEV:
+		value = (strcmp(dev->dev->driver->name, "virtio-pci") == 0) ? 1 : 0;
+		break;
 	default:
 		return -EINVAL;
 	}
