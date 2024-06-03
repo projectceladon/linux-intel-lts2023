@@ -5,6 +5,7 @@
 
 #include <asm/msr.h>
 #include <asm/mwait.h>
+#include "asm/hypervisor.h"
 
 #define UMWAIT_C02_ENABLE	0
 
@@ -206,7 +207,8 @@ static int __init umwait_init(void)
 	struct device *dev;
 	int ret;
 
-	if (!boot_cpu_has(X86_FEATURE_WAITPKG))
+	if (!hypervisor_is_type(X86_HYPER_QNX) &&
+		!boot_cpu_has(X86_FEATURE_WAITPKG))
 		return -ENODEV;
 
 	/*

@@ -41,6 +41,8 @@
 #include <asm/apic.h>
 #endif
 
+#include "asm/hypervisor.h"
+
 enum split_lock_detect_state {
 	sld_off = 0,
 	sld_warn,
@@ -425,7 +427,8 @@ static void early_init_intel(struct cpuinfo_x86 *c)
 	 * Adjust the number of physical bits early because it affects the
 	 * valid bits of the MTRR mask registers.
 	 */
-	if (cpu_has(c, X86_FEATURE_TME))
+	if (!hypervisor_is_type(X86_HYPER_QNX) &&
+	    cpu_has(c, X86_FEATURE_TME))
 		detect_tme_early(c);
 }
 

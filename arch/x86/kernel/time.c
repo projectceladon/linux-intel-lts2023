@@ -25,6 +25,8 @@
 #include <asm/hpet.h>
 #include <asm/time.h>
 
+#include "asm/hypervisor.h"
+
 unsigned long profile_pc(struct pt_regs *regs)
 {
 	return instruction_pointer(regs);
@@ -82,7 +84,8 @@ static __init void x86_late_time_init(void)
 	x86_init.irqs.intr_mode_init();
 	tsc_init();
 
-	if (static_cpu_has(X86_FEATURE_WAITPKG))
+	if (!hypervisor_is_type(X86_HYPER_QNX) &&
+		static_cpu_has(X86_FEATURE_WAITPKG))
 		use_tpause_delay();
 }
 
