@@ -183,6 +183,17 @@ struct virtio_gpu_vbuffer {
 	uint32_t seqno;
 };
 
+struct virtio_gpu_hdcp {
+	struct work_struct prop_work;
+	struct mutex mutex;
+	struct virtio_gpu_output *output;
+	u32 value;
+	u32 type;
+	int hdcp2;
+	int connector_hdcp2;
+	bool query_done;
+};
+
 #define VIRTIO_GPU_MAX_PLANES 6
 /*hardcode igpu scaler number ver>11 */
 #define SKL_NUM_SCALERS 2
@@ -203,6 +214,7 @@ struct virtio_gpu_output {
 	int plane_num;
 	uint64_t rotation[VIRTIO_GPU_MAX_PLANES];
 	unsigned scaler_users;
+	struct virtio_gpu_hdcp hdcp;
 };
 #define drm_crtc_to_virtio_gpu_output(x) \
 	container_of(x, struct virtio_gpu_output, crtc)
@@ -260,6 +272,8 @@ struct virtio_gpu_device {
 	uint32_t output_cap_mask;
 	struct virtio_gpu_queue ctrlq;
 	struct virtio_gpu_queue cursorq;
+	struct virtio_gpu_queue hdcpq;
+	struct virtio_gpu_cp_notification hdcp_buf;
 
 	struct kmem_cache *vbufs;
 
@@ -287,6 +301,7 @@ struct virtio_gpu_device {
 	bool has_rotation;
 	bool has_pixel_blend_mode;
 	bool has_multi_planar;
+	bool has_hdcp;
 	bool has_indirect;
 	bool has_resource_assign_uuid;
 	bool has_resource_blob;
@@ -459,13 +474,16 @@ virtio_gpu_cmd_resource_create_3d(struct virtio_gpu_device *vgdev,
 void virtio_gpu_ctrl_ack(struct virtqueue *vq);
 void virtio_gpu_cursor_ack(struct virtqueue *vq);
 void virtio_gpu_vblank_ack(struct virtqueue *vq);
+void virtio_gpu_hdcp_ack(struct virtqueue *vq);
 void virtio_gpu_vblank_poll_arm(struct virtqueue *vq);
 void virtio_gpu_fence_ack(struct virtqueue *vq);
 void virtio_gpu_dequeue_ctrl_func(struct work_struct *work);
 void virtio_gpu_dequeue_cursor_func(struct work_struct *work);
+void virtio_gpu_dequeue_hdcp_func(struct work_struct *work);
 void virtio_gpu_dequeue_fence_func(struct work_struct *work);
 void virtio_gpu_notify(struct virtio_gpu_device *vgdev);
 void virtio_gpu_vblankq_notify(struct virtio_gpu_device *vgdev);
+void virtio_gpu_hdcp_notify(struct virtio_gpu_device *vgdev);
 int
 virtio_gpu_cmd_resource_assign_uuid(struct virtio_gpu_device *vgdev,
 				    struct virtio_gpu_object_array *objs);
@@ -508,6 +526,13 @@ void virtio_gpu_cmd_set_scaling(struct virtio_gpu_device *vgdev,
 
 void virtio_gpu_cmd_send_misc(struct virtio_gpu_device *vgdev, uint32_t scanout_id,
 		uint32_t plane_indx, struct virtio_gpu_cmd *cmdp, int cnt);
+
+int virtio_gpu_cmd_cp_set(struct virtio_gpu_device *vgdev,
+				uint32_t scanout_id,
+				uint32_t type, uint32_t cp);
+
+int virtio_gpu_cmd_cp_query(struct virtio_gpu_device *vgdev,
+				uint32_t scanout_id);
 
 /* virtgpu_display.c */
 int virtio_gpu_modeset_init(struct virtio_gpu_device *vgdev);
@@ -567,6 +592,7 @@ struct drm_gem_object *virtgpu_gem_prime_import_sg_table(
 
 /* virtgpu_debugfs.c */
 void virtio_gpu_debugfs_init(struct drm_minor *minor);
+void virtio_gpu_debugfs_late_init(struct virtio_gpu_device *vgpudev);
 
 /* virtgpu_vram.c */
 bool virtio_gpu_is_vram(struct virtio_gpu_object *bo);
