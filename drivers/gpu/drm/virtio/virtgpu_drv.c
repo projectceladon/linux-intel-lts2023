@@ -117,6 +117,8 @@ static int virtio_gpu_probe(struct virtio_device *vdev)
 		goto err_deinit;
 
 	drm_fbdev_generic_setup(vdev->priv, 32);
+	virtio_gpu_debugfs_late_init(pgpudev);
+
 	return 0;
 
 err_deinit:
@@ -171,6 +173,7 @@ static unsigned int features[] = {
 	VIRTIO_GPU_F_ROTATION,
 	VIRTIO_GPU_F_PIXEL_BLEND_MODE,
 	VIRTIO_GPU_F_MULTI_PLANAR_FORMAT,
+	VIRTIO_GPU_F_HDCP,
 };
 
 #ifdef CONFIG_PM_SLEEP
@@ -224,6 +227,8 @@ static int virtgpu_restore(struct virtio_device *vdev)
 		DRM_ERROR("Failed to recover objects\n");
 		return error;
 	}
+	if (vgdev->has_hdcp)
+		virtio_gpu_hdcp_notify(vgdev);
 
 	error = drm_mode_config_helper_resume(dev);
 	if (error) {
