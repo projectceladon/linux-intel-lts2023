@@ -97,6 +97,8 @@
 
 #define VIRTIO_GPU_F_FLIP_SEQUENCE       14
 
+#define VIRTIO_GPU_F_HDCP                15
+
 #define VIRTIO_GPU_TUNNEL_CMD_SET_ROTATION 1
 #define VIRTIO_GPU_TUNNEL_CMD_SET_BLEND 2
 #define VIRTIO_GPU_TUNNEL_CMD_SET_PLANARS 3
@@ -149,6 +151,10 @@ enum virtio_gpu_ctrl_type {
 	VIRTIO_GPU_CMD_BACKLIGHT_GET,
 	VIRTIO_GPU_CMD_BACKLIGHT_QUERY,
 
+	/*content protection*/
+	VIRTIO_GPU_CMD_CP_SET = 0x0500,
+	VIRTIO_GPU_CMD_CP_QUERY = 0x0501,
+
 	/* success responses */
 	VIRTIO_GPU_RESP_OK_NODATA = 0x1100,
 	VIRTIO_GPU_RESP_OK_DISPLAY_INFO,
@@ -159,6 +165,7 @@ enum virtio_gpu_ctrl_type {
 	VIRTIO_GPU_RESP_OK_MAP_INFO,
 	VIRTIO_GPU_RESP_OK_BACKLIGHT_GET,
 	VIRTIO_GPU_RESP_OK_BACKLIGHT,
+	VIRTIO_GPU_RESP_OK_CP_QUERY,
 
 	/* error responses */
 	VIRTIO_GPU_RESP_ERR_UNSPEC = 0x1200,
@@ -337,6 +344,33 @@ struct virtio_gpu_get_backlight_info {
 	struct virtio_gpu_ctrl_hdr hdr;
 	__le32 backlight_id;
 	__le32 padding;
+};
+
+/* VIRTIO_GPU_CMD_CP_SET */
+struct virtio_gpu_cp_set {
+	struct virtio_gpu_ctrl_hdr hdr;
+	__le32 scanout_id;
+	__le32 type;
+	__le32 cp;
+	__le32 padding;
+};
+
+/* VIRTIO_GPU_CMD_CP_QUERY */
+struct virtio_gpu_cp_query {
+	struct virtio_gpu_ctrl_hdr hdr;
+	__le32 scanout_id;
+	__le32 padding;
+};
+
+struct virtio_gpu_resp_cp_query {
+	struct virtio_gpu_ctrl_hdr hdr;
+	__le32 hdcp2;
+	__le32 connector_hdcp2;
+};
+
+struct virtio_gpu_cp_notification {
+	__le32 id;
+	__le32 value;
 };
 
 struct virtio_gpu_resp_backlight_info {
