@@ -63,6 +63,7 @@ static int virtio_gpu_features(struct seq_file *m, void *data)
 	virtio_gpu_add_bool(m, "pixel_blend_mode", vgdev->has_pixel_blend_mode);
 	virtio_gpu_add_bool(m, "multi_planar", vgdev->has_multi_planar);
 	virtio_gpu_add_bool(m, "modifier", vgdev->has_modifier);
+	virtio_gpu_add_bool(m, "hdcp", vgdev->has_hdcp);
 	virtio_gpu_add_int(m, "cap sets", vgdev->num_capsets);
 	virtio_gpu_add_int(m, "scanouts", vgdev->num_scanouts);
 	if (vgdev->host_visible_region.len) {
@@ -129,6 +130,50 @@ static struct drm_info_list virtio_gpu_debugfs_list[] = {
 };
 
 #define VIRTIO_GPU_DEBUGFS_ENTRIES ARRAY_SIZE(virtio_gpu_debugfs_list)
+
+static int hdcp_sink_capability_show(struct seq_file *m, void *data)
+{
+	struct virtio_gpu_output *output = m->private;
+	struct drm_connector *connector = &output->conn;
+
+	seq_printf(m, "%s:%d HDCP version: ", connector->name,
+		connector->base.id);
+
+	if (output->hdcp.connector_hdcp2 == 3)
+		seq_puts(m, "HDCP1.4 HDCP2.2");
+	else if (output->hdcp.connector_hdcp2 == 2)
+		seq_puts(m, "HDCP2.2");
+	else if (output->hdcp.connector_hdcp2 == 1)
+		seq_puts(m, "HDCP1.4");
+	else
+		seq_puts(m, "None");
+
+	seq_puts(m, "\n");
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(hdcp_sink_capability);
+
+static void
+virtio_gpu_connector_debugfs_init(struct virtio_gpu_output *output)
+{
+	struct drm_connector *connector = &output->conn;
+	struct dentry *root = connector->debugfs_entry;
+	debugfs_create_file("hdcp_sink_capability", S_IRUGO, root,
+			output, &hdcp_sink_capability_fops);
+}
+
+void
+virtio_gpu_debugfs_late_init(struct virtio_gpu_device *vgpudev)
+{
+
+	struct virtio_gpu_output *output;
+	int i;
+	for (i = 0; i < vgpudev->num_scanouts; i++) {
+		output = &vgpudev->outputs[i];
+		if (vgpudev->has_hdcp)
+			virtio_gpu_connector_debugfs_init(output);
+	}
+}
 
 void
 virtio_gpu_debugfs_init(struct drm_minor *minor)
