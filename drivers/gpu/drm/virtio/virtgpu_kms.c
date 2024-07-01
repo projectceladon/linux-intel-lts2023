@@ -133,8 +133,15 @@ int virtio_gpu_find_vqs(struct virtio_gpu_device *vgdev)
 	int i, total_vqs, err;
 	const char **names;
 	int ret = 0;
+	int hdcp_vq = 0;
+	int hdcp_vq_index = 0;
 
-	total_vqs = vgdev->num_vblankq + 2;
+	if (vgdev->has_hdcp) {
+		hdcp_vq = 1;
+		hdcp_vq_index = vgdev->num_vblankq + 2;
+	}
+
+	total_vqs = vgdev->num_vblankq + 2 + hdcp_vq;
 	vqs = kcalloc(total_vqs, sizeof(*vqs), GFP_KERNEL);
 	callbacks = kmalloc_array(total_vqs, sizeof(vq_callback_t *),
 				  GFP_KERNEL);
@@ -149,9 +156,13 @@ int virtio_gpu_find_vqs(struct virtio_gpu_device *vgdev)
 	callbacks[1] = virtio_gpu_cursor_ack;
 	names[0] = "control";
 	names[1] = "cursor";
-	for (i = 2; i < total_vqs; i++) {
+	for (i = 2; i < vgdev->num_vblankq + 2; i++) {
 		callbacks[i] = virtio_gpu_vblank_ack;
 		names[i] = "vblank";
+	}
+	if (hdcp_vq) {
+		callbacks[hdcp_vq_index] = virtio_gpu_hdcp_ack;
+		names[hdcp_vq_index] = "hdcp";
 	}
 
 	ret = virtio_find_vqs(vgdev->vdev, total_vqs, vqs, callbacks, names, NULL);
@@ -160,9 +171,12 @@ int virtio_gpu_find_vqs(struct virtio_gpu_device *vgdev)
 
 	vgdev->ctrlq.vq = vqs[0];
 	vgdev->cursorq.vq = vqs[1];
+	for (i = 2; i < vgdev->num_vblankq + 2; i++)
+		vgdev->vblank[i - 2].vblank.vq = vqs[i];
+	if (hdcp_vq) {
+		vgdev->hdcpq.vq = vqs[hdcp_vq_index];
+	}
 
-	for (i = 2; i < total_vqs; i++)
-		vgdev->vblank[i-2].vblank.vq = vqs[i];
 
 	ret = 0;
 out:
@@ -250,6 +264,10 @@ int virtio_gpu_init(struct virtio_device *vdev, struct drm_device *dev)
 	if (virtio_has_feature(vgdev->vdev, VIRTIO_GPU_F_MULTI_PLANAR_FORMAT)) {
 		vgdev->has_multi_planar = true;
 	}
+	if (virtio_has_feature(vgdev->vdev, VIRTIO_GPU_F_HDCP)) {
+		vgdev->has_hdcp = true;
+	}
+
 	if (virtio_has_feature(vgdev->vdev, VIRTIO_GPU_F_RESOURCE_BLOB)) {
 		vgdev->has_resource_blob = true;
 		if (virtio_has_feature(vgdev->vdev, VIRTIO_GPU_F_MODIFIER)) {
@@ -285,11 +303,12 @@ int virtio_gpu_init(struct virtio_device *vdev, struct drm_device *dev)
 		 vgdev->has_resource_blob ? '+' : '-',
 		 vgdev->has_host_visible ? '+' : '-');
 
-	DRM_INFO("features: %cscaling %cvblank %cmodifier %cmulti_plane",
+	DRM_INFO("features: %cscaling %cvblank %cmodifier %cmulti_plane %chdcp",
 		 vgdev->has_scaling ? '+' : '-',
 		 vgdev->has_vblank ? '+' : '-',
 		 vgdev->has_modifier ? '+' : '-',
-		 vgdev->has_multi_plane ? '+' : '-');
+		 vgdev->has_multi_plane ? '+' : '-',
+		 vgdev->has_hdcp ? '+' : '-');
 
 	DRM_INFO("features: %ccontext_init %callow_p2p %cflip_sequence\n",
 		 vgdev->has_context_init ? '+' : '-',
@@ -333,6 +352,9 @@ int virtio_gpu_init(struct virtio_device *vdev, struct drm_device *dev)
 		DRM_INFO("p2p crtc bitmask 0x%x \r\n", vgdev->output_cap_mask);
 	}
 
+	if (vgdev->has_hdcp)
+		virtio_gpu_init_vq(&vgdev->hdcpq, virtio_gpu_dequeue_hdcp_func);
+
 	ret = virtio_gpu_find_vqs(vgdev);
 	if (ret) {
 		DRM_ERROR("failed to find virt queues\n");
@@ -359,6 +381,8 @@ int virtio_gpu_init(struct virtio_device *vdev, struct drm_device *dev)
 	}
 
 	virtio_gpu_vblankq_notify(vgdev);
+	if (vgdev->has_hdcp)
+		virtio_gpu_hdcp_notify(vgdev);
 
 	for(i=0; i < vgdev->num_vblankq; i++)
 		virtqueue_disable_cb(vgdev->vblank[i].vblank.vq);
