@@ -32,8 +32,9 @@ static DEFINE_MUTEX(virtio_fs_mutex);
 static LIST_HEAD(virtio_fs_instances);
 
 enum {
-	VQ_HIPRIO,
-	VQ_REQUEST
+	VQ_HIPRIO = 0,
+	/* TODO add VQ_NOTIFICATION according to the virtio 1.2 spec. */
+	VQ_REQUEST = 1,
 };
 
 #define VQ_NAME_LEN	24
@@ -51,6 +52,7 @@ struct virtio_fs_vq {
 	long in_flight;
 	struct completion in_flight_zero; /* No inflight requests */
 	char name[VQ_NAME_LEN];
+	struct workqueue_struct		*done_wq;
 } ____cacheline_aligned_in_smp;
 
 /* A virtio-fs device instance */
@@ -59,6 +61,7 @@ struct virtio_fs {
 	struct list_head list;    /* on virtio_fs_instances */
 	char *tag;
 	struct virtio_fs_vq *vqs;
+	struct virtio_fs_vq * __percpu *vq_proxy;
 	unsigned int nvqs;               /* number of virtqueues */
 	unsigned int num_request_queues; /* number of request queues */
 	struct dax_device *dax_dev;
@@ -666,7 +669,7 @@ static void virtio_fs_vq_done(struct virtqueue *vq)
 
 	dev_dbg(&vq->vdev->dev, "%s %s\n", __func__, fsvq->name);
 
-	schedule_work(&fsvq->done_work);
+	queue_work(fsvq->done_wq, &fsvq->done_work);
 }
 
 static void virtio_fs_init_vq(struct virtio_fs_vq *fsvq, char *name,
@@ -696,6 +699,7 @@ static int virtio_fs_setup_vqs(struct virtio_device *vdev,
 	struct virtqueue **vqs;
 	vq_callback_t **callbacks;
 	const char **names;
+	struct irq_affinity desc = { .pre_vectors = 1, .nr_sets = 1, };
 	unsigned int i;
 	int ret = 0;
 
@@ -704,11 +708,14 @@ static int virtio_fs_setup_vqs(struct virtio_device *vdev,
 	if (fs->num_request_queues == 0)
 		return -EINVAL;
 
+	fs->num_request_queues = min_t(unsigned int, nr_cpu_ids,
+				       fs->num_request_queues);
+
 	fs->nvqs = VQ_REQUEST + fs->num_request_queues;
 	fs->vqs = kcalloc(fs->nvqs, sizeof(fs->vqs[VQ_HIPRIO]), GFP_KERNEL);
 	if (!fs->vqs)
 		return -ENOMEM;
-
+	pr_debug("virtio-fs: number of vqs: %d\n", fs->nvqs);
 	vqs = kmalloc_array(fs->nvqs, sizeof(vqs[VQ_HIPRIO]), GFP_KERNEL);
 	callbacks = kmalloc_array(fs->nvqs, sizeof(callbacks[VQ_HIPRIO]),
 					GFP_KERNEL);
@@ -722,6 +729,8 @@ static int virtio_fs_setup_vqs(struct virtio_device *vdev,
 	callbacks[VQ_HIPRIO] = virtio_fs_vq_done;
 	virtio_fs_init_vq(&fs->vqs[VQ_HIPRIO], "hiprio", VQ_HIPRIO);
 	names[VQ_HIPRIO] = fs->vqs[VQ_HIPRIO].name;
+	fs->vqs[VQ_HIPRIO].done_wq = alloc_workqueue("fs_done_wq-%u",WQ_MEM_RECLAIM | WQ_UNBOUND,
+							0, VQ_HIPRIO);
 
 	/* Initialize the requests virtqueues */
 	for (i = VQ_REQUEST; i < fs->nvqs; i++) {
@@ -731,14 +740,30 @@ static int virtio_fs_setup_vqs(struct virtio_device *vdev,
 		virtio_fs_init_vq(&fs->vqs[i], vq_name, VQ_REQUEST);
 		callbacks[i] = virtio_fs_vq_done;
 		names[i] = fs->vqs[i].name;
+		fs->vqs[i].done_wq = alloc_workqueue("fs_done_wq-%u", WQ_MEM_RECLAIM | WQ_UNBOUND,
+							0, i - VQ_REQUEST);
 	}
 
-	ret = virtio_find_vqs(vdev, fs->nvqs, vqs, callbacks, names, NULL);
+	ret = virtio_find_vqs(vdev, fs->nvqs, vqs, callbacks, names, &desc);
 	if (ret < 0)
 		goto out;
 
-	for (i = 0; i < fs->nvqs; i++)
+	fs->vq_proxy = alloc_percpu(struct virtio_fs_vq *);
+	for (i = 0; i < fs->nvqs; i++) {
+		const struct cpumask *mask;
+		unsigned int cpu;
+
 		fs->vqs[i].vq = vqs[i];
+		if (i == VQ_HIPRIO)
+			continue;
+
+		mask = vdev->config->get_vq_affinity(vdev, i);
+		for_each_cpu(cpu, mask) {
+			struct virtio_fs_vq **cpu_vq = per_cpu_ptr(fs->vq_proxy, cpu);
+			*cpu_vq = &fs->vqs[i];
+			pr_debug("virtio-fs: map cpu %d to vq%d\n", cpu, i);
+		}
+	}
 
 	virtio_fs_start_all_queues(fs);
 out:
@@ -927,6 +952,20 @@ static void virtio_fs_stop_all_queues(struct virtio_fs *fs)
 	}
 }
 
+static void virtio_fs_stop_all_wqs(struct virtio_fs *fs)
+{
+	struct virtio_fs_vq *fsvq;
+	int i;
+
+	for (i = 0; i < fs->nvqs; i++) {
+		fsvq = &fs->vqs[i];
+		if (fsvq->done_wq) {
+			drain_workqueue(fsvq->done_wq);
+			destroy_workqueue(fsvq->done_wq);
+		}
+	}
+}
+
 static void virtio_fs_remove(struct virtio_device *vdev)
 {
 	struct virtio_fs *fs = vdev->priv;
@@ -937,7 +976,9 @@ static void virtio_fs_remove(struct virtio_device *vdev)
 	virtio_fs_stop_all_queues(fs);
 	virtio_fs_drain_all_queues_locked(fs);
 	virtio_reset_device(vdev);
+	free_percpu(fs->vq_proxy);
 	virtio_fs_cleanup_vqs(vdev);
+	virtio_fs_stop_all_wqs(fs);
 
 	vdev->priv = NULL;
 	/* Put device reference on virtio_fs object */
@@ -1236,7 +1277,6 @@ static void virtio_fs_wake_pending_and_unlock(struct fuse_iqueue *fiq,
 					      bool sync)
 __releases(fiq->lock)
 {
-	unsigned int queue_id = VQ_REQUEST; /* TODO multiqueue */
 	struct virtio_fs *fs;
 	struct fuse_req *req;
 	struct virtio_fs_vq *fsvq;
@@ -1256,7 +1296,7 @@ __releases(fiq->lock)
 		 req->in.h.nodeid, req->in.h.len,
 		 fuse_len_args(req->args->out_numargs, req->args->out_args));
 
-	fsvq = &fs->vqs[queue_id];
+	fsvq = this_cpu_read(*fs->vq_proxy);
 	ret = virtio_fs_enqueue_req(fsvq, req, false);
 	if (ret < 0) {
 		if (ret == -ENOMEM || ret == -ENOSPC) {
