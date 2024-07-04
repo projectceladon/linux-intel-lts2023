@@ -2206,8 +2206,12 @@ static int btintel_prepare_fw_download_tlv(struct hci_dev *hdev,
 	if (err < 0) {
 		if (err == -EALREADY) {
 			/* Firmware has already been loaded */
-			btintel_set_flag(hdev, INTEL_FIRMWARE_LOADED);
-			err = 0;
+			bt_dev_info(hdev, "Firmware already loaded");
+			//btintel_set_flag(hdev, INTEL_FIRMWARE_LOADED);
+			btintel_reset_to_bootloader(hdev);
+			/*even this error report, the BT still working ,
+			so 150ms delay is still needed */
+			msleep(150);
 			goto done;
 		}
 
