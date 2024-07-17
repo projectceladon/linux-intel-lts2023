@@ -353,6 +353,24 @@ int optee_close_session(struct tee_context *ctx, u32 session)
 	return 0;
 }
 
+int optee_close_opened_session(struct tee_context *ctx, u32 session)
+{
+	struct tee_shm *shm;
+	struct optee_msg_arg *msg_arg;
+	phys_addr_t msg_parg;
+
+	shm = get_msg_arg(ctx, 0, &msg_arg, &msg_parg);
+	if (IS_ERR(shm))
+		return PTR_ERR(shm);
+
+	msg_arg->cmd = OPTEE_MSG_CMD_CLOSE_SESSION;
+	msg_arg->session = session;
+	optee_do_call_with_arg(ctx, msg_parg);
+
+	tee_shm_free(shm);
+	return 0;
+}
+
 int optee_invoke_func(struct tee_context *ctx, struct tee_ioctl_invoke_arg *arg,
 		      struct tee_param *param)
 {
