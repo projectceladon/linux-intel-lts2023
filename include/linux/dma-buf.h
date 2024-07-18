@@ -700,6 +700,10 @@ struct dma_buf_attachment *
 dma_buf_dynamic_attach(struct dma_buf *dmabuf, struct device *dev,
 		       const struct dma_buf_attach_ops *importer_ops,
 		       void *importer_priv);
+struct dma_buf_attachment *
+____dma_buf_dynamic_attach(struct dma_buf *dmabuf, struct device *dev,
+		           const struct dma_buf_attach_ops *importer_ops,
+		           void *importer_priv, bool p2p);
 void dma_buf_detach(struct dma_buf *dmabuf,
 		    struct dma_buf_attachment *attach);
 int dma_buf_pin(struct dma_buf_attachment *attach);

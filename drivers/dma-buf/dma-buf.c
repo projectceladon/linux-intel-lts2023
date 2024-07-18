@@ -1020,6 +1020,94 @@ err_unlock:
 EXPORT_SYMBOL_NS_GPL(dma_buf_dynamic_attach, DMA_BUF);
 
 /**
+ * This is simply a replication of dma_buf_dynamic_attach with parameter p2p
+ * added, which allows us to set attach->peer2peer without implementing
+ * move_notify callback of importer_ops.
+ */
+struct dma_buf_attachment *
+____dma_buf_dynamic_attach(struct dma_buf *dmabuf, struct device *dev,
+			const struct dma_buf_attach_ops *importer_ops,
+			void *importer_priv, bool p2p)
+{
+	struct dma_buf_attachment *attach;
+	int ret;
+
+	if (WARN_ON(!dmabuf || !dev))
+		return ERR_PTR(-EINVAL);
+
+	if (WARN_ON(importer_ops && !importer_ops->move_notify))
+		return ERR_PTR(-EINVAL);
+
+	attach = kzalloc(sizeof(*attach), GFP_KERNEL);
+	if (!attach)
+		return ERR_PTR(-ENOMEM);
+
+	attach->dev = dev;
+	attach->dmabuf = dmabuf;
+	if (importer_ops)
+		attach->peer2peer = importer_ops->allow_peer2peer;
+	if (p2p)
+		attach->peer2peer = p2p;
+	attach->importer_ops = importer_ops;
+	attach->importer_priv = importer_priv;
+
+	if (dmabuf->ops->attach) {
+		ret = dmabuf->ops->attach(dmabuf, attach);
+		if (ret)
+			goto err_attach;
+	}
+	dma_resv_lock(dmabuf->resv, NULL);
+	list_add(&attach->node, &dmabuf->attachments);
+	dma_resv_unlock(dmabuf->resv);
+
+	/* When either the importer or the exporter can't handle dynamic
+	 * mappings we cache the mapping here to avoid issues with the
+	 * reservation object lock.
+	 */
+	if (dma_buf_attachment_is_dynamic(attach) !=
+	    dma_buf_is_dynamic(dmabuf)) {
+		struct sg_table *sgt;
+
+		if (dma_buf_is_dynamic(attach->dmabuf)) {
+			dma_resv_lock(attach->dmabuf->resv, NULL);
+			ret = dmabuf->ops->pin(attach);
+			if (ret)
+				goto err_unlock;
+		}
+
+		sgt = __map_dma_buf(attach, DMA_BIDIRECTIONAL);
+		if (!sgt)
+			sgt = ERR_PTR(-ENOMEM);
+		if (IS_ERR(sgt)) {
+			ret = PTR_ERR(sgt);
+			goto err_unpin;
+		}
+		if (dma_buf_is_dynamic(attach->dmabuf))
+			dma_resv_unlock(attach->dmabuf->resv);
+		attach->sgt = sgt;
+		attach->dir = DMA_BIDIRECTIONAL;
+	}
+
+	return attach;
+
+err_attach:
+	kfree(attach);
+	return ERR_PTR(ret);
+
+err_unpin:
+	if (dma_buf_is_dynamic(attach->dmabuf))
+		dmabuf->ops->unpin(attach);
+
+err_unlock:
+	if (dma_buf_is_dynamic(attach->dmabuf))
+		dma_resv_unlock(attach->dmabuf->resv);
+
+	dma_buf_detach(dmabuf, attach);
+	return ERR_PTR(ret);
+}
+EXPORT_SYMBOL_NS_GPL(____dma_buf_dynamic_attach, DMA_BUF);
+
+/**
  * dma_buf_attach - Wrapper for dma_buf_dynamic_attach
  * @dmabuf:	[in]	buffer to attach device to.
  * @dev:	[in]	device to be attached.
