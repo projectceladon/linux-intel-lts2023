@@ -70,6 +70,8 @@ void (*x86_return_thunk)(void) __ro_after_init = __x86_return_thunk;
 /* Update SPEC_CTRL MSR and its cached copy unconditionally */
 static void update_spec_ctrl(u64 val)
 {
+	if (hypervisor_is_type(X86_HYPER_QNX))
+		return;
 	this_cpu_write(x86_spec_ctrl_current, val);
 	wrmsrl(MSR_IA32_SPEC_CTRL, val);
 }
@@ -135,7 +137,8 @@ void __init cpu_select_mitigations(void)
 	 * have unknown values. AMD64_LS_CFG MSR is cached in the early AMD
 	 * init code as it is not enumerated and depends on the family.
 	 */
-	if (cpu_feature_enabled(X86_FEATURE_MSR_SPEC_CTRL)) {
+	if (!hypervisor_is_type(X86_HYPER_QNX) &&
+		cpu_feature_enabled(X86_FEATURE_MSR_SPEC_CTRL)) {
 		rdmsrl(MSR_IA32_SPEC_CTRL, x86_spec_ctrl_base);
 
 		/*

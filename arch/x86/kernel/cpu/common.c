@@ -999,7 +999,8 @@ static void init_speculation_control(struct cpuinfo_x86 *c)
 	if (cpu_has(c, X86_FEATURE_SPEC_CTRL)) {
 		set_cpu_cap(c, X86_FEATURE_IBRS);
 		set_cpu_cap(c, X86_FEATURE_IBPB);
-		set_cpu_cap(c, X86_FEATURE_MSR_SPEC_CTRL);
+		if (!hypervisor_is_type(X86_HYPER_QNX))
+			set_cpu_cap(c, X86_FEATURE_MSR_SPEC_CTRL);
 	}
 
 	if (cpu_has(c, X86_FEATURE_INTEL_STIBP))
@@ -1011,7 +1012,8 @@ static void init_speculation_control(struct cpuinfo_x86 *c)
 
 	if (cpu_has(c, X86_FEATURE_AMD_IBRS)) {
 		set_cpu_cap(c, X86_FEATURE_IBRS);
-		set_cpu_cap(c, X86_FEATURE_MSR_SPEC_CTRL);
+		if (!hypervisor_is_type(X86_HYPER_QNX))
+			set_cpu_cap(c, X86_FEATURE_MSR_SPEC_CTRL);
 	}
 
 	if (cpu_has(c, X86_FEATURE_AMD_IBPB))
@@ -1019,12 +1021,14 @@ static void init_speculation_control(struct cpuinfo_x86 *c)
 
 	if (cpu_has(c, X86_FEATURE_AMD_STIBP)) {
 		set_cpu_cap(c, X86_FEATURE_STIBP);
-		set_cpu_cap(c, X86_FEATURE_MSR_SPEC_CTRL);
+		if (!hypervisor_is_type(X86_HYPER_QNX))
+			set_cpu_cap(c, X86_FEATURE_MSR_SPEC_CTRL);
 	}
 
 	if (cpu_has(c, X86_FEATURE_AMD_SSBD)) {
 		set_cpu_cap(c, X86_FEATURE_SSBD);
-		set_cpu_cap(c, X86_FEATURE_MSR_SPEC_CTRL);
+		if (!hypervisor_is_type(X86_HYPER_QNX))
+			set_cpu_cap(c, X86_FEATURE_MSR_SPEC_CTRL);
 		clear_cpu_cap(c, X86_FEATURE_VIRT_SSBD);
 	}
 }

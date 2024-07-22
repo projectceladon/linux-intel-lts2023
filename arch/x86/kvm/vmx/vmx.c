@@ -7203,7 +7203,8 @@ void noinstr vmx_spec_ctrl_restore_host(struct vcpu_vmx *vmx,
 {
 	u64 hostval = this_cpu_read(x86_spec_ctrl_current);
 
-	if (!cpu_feature_enabled(X86_FEATURE_MSR_SPEC_CTRL))
+	if (!hypervisor_is_type(X86_HYPER_QNX) &&
+		!cpu_feature_enabled(X86_FEATURE_MSR_SPEC_CTRL))
 		return;
 
 	if (flags & VMX_RUN_SAVE_SPEC_CTRL)
