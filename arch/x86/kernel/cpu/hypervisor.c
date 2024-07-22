@@ -45,6 +45,9 @@ static const __initconst struct hypervisor_x86 * const hypervisors[] =
 #ifdef CONFIG_ACRN_GUEST
 	&x86_hyper_acrn,
 #endif
+#ifdef CONFIG_QNX_GUEST
+	&x86_hyper_qnx,
+#endif
 };
 
 enum x86_hypervisor_type x86_hyper_type;
