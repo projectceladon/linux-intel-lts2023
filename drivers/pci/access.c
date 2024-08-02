@@ -6,6 +6,9 @@
 #include <linux/wait.h>
 
 #include "pci.h"
+#ifdef CONFIG_QNX_GUEST
+#include "asm/hypervisor.h"
+#endif
 
 /*
  * This interrupt-safe spinlock protects all accesses to PCI
@@ -32,6 +35,75 @@ DEFINE_RAW_SPINLOCK(pci_lock);
 # define pci_unlock_config(f)	raw_spin_unlock_irqrestore(&pci_lock, f)
 #endif
 
+#ifdef CONFIG_QNX_GUEST
+#define MAX_OVERRIDE_RULES 8
+struct config_override_rule {
+	int devfn;
+	int where;
+	int value;
+};
+static struct config_override_rule config_override_rules[MAX_OVERRIDE_RULES];
+static int config_override_rule_num;
+
+static int __init parse_pci_config_override(char *str)
+{
+	struct config_override_rule *rule;
+	int ret, devfn, where, value;
+
+	if (!hypervisor_is_type(X86_HYPER_QNX))
+		return 0;
+
+	if (!str)
+		return 0;
+	if (config_override_rule_num >= MAX_OVERRIDE_RULES)
+		return 0;
+	ret = get_option(&str, &devfn);
+	if (ret == 2)
+		ret = get_option(&str, &where);
+	if (ret == 2)
+		ret = get_option(&str, &value);
+	if (ret != 1)
+		return 0;
+
+	rule = config_override_rules + config_override_rule_num;
+	rule->devfn = devfn;
+	rule->where = where;
+	rule->value = value;
+	config_override_rule_num++;
+
+	printk(KERN_INFO "PCI PATCH CFG: PCI bus 00:%02x.%d config register 0x%x -> 0x%x\n",
+	       PCI_SLOT(devfn), PCI_FUNC(devfn), where, value);
+
+	return 1;
+}
+__setup("pci_config_override=", parse_pci_config_override);
+
+static void
+pci_patch_config_register(struct pci_bus *bus, unsigned int devfn, int where, int size, u32 *val)
+{
+	u32 mask = (u32)((1UL << (size * 8)) - 1);
+	int i;
+
+	if (!hypervisor_is_type(X86_HYPER_QNX) || *val != mask)
+		return;
+	for (i = 0; i < config_override_rule_num; i++) {
+		struct config_override_rule *rule = config_override_rules + i;
+
+		if (devfn == rule->devfn && (where & ~0x3) == rule->where) {
+			int shift = where - rule->where;
+			*val = ((rule->value >> shift) & mask);
+			dev_info(&bus->dev, "PCI PATCH: Config register %02x.%d : 0x%x -> 0x%x\n",
+				PCI_SLOT(devfn), PCI_FUNC(devfn), where, *val);
+		}
+	}
+}
+#else
+static void
+pci_patch_config_register(struct pci_bus *bus, unsigned int devfn, int where, int size, u32 *val)
+{
+}
+#endif
+
 #define PCI_OP_READ(size, type, len) \
 int noinline pci_bus_read_config_##size \
 	(struct pci_bus *bus, unsigned int devfn, int pos, type *value)	\
@@ -42,6 +114,7 @@ int noinline pci_bus_read_config_##size \
 	if (PCI_##size##_BAD) return PCIBIOS_BAD_REGISTER_NUMBER;	\
 	pci_lock_config(flags);						\
 	res = bus->ops->read(bus, devfn, pos, len, &data);		\
+	pci_patch_config_register(bus, devfn, pos, len, &data);		\
 	if (res)							\
 		PCI_SET_ERROR_RESPONSE(value);				\
 	else								\

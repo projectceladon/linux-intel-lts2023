@@ -20,6 +20,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/bitfield.h>
 #include "pci.h"
+#include "asm/hypervisor.h"
 
 #define CARDBUS_LATENCY_TIMER	176	/* secondary latency timer */
 #define CARDBUS_RESERVE_BUSNR	3
@@ -162,6 +163,107 @@ static inline unsigned long decode_bar(struct pci_dev *dev, u32 bar)
 	return flags;
 }
 
+#ifdef CONFIG_QNX_GUEST
+#define MAX_OVERRIDE_RULES 8
+struct bar_override_rule {
+	int devfn;
+	int pos;
+	int width;
+	u64 size;
+	phys_addr_t addr;
+};
+
+static struct bar_override_rule bar_override_rules[MAX_OVERRIDE_RULES];
+static int bar_override_rule_num;
+
+static int __init parse_pci_bar_override(char *str)
+{
+	struct bar_override_rule *rule;
+	int ret, devfn, pos, width;
+	u64 size;
+	phys_addr_t addr;
+
+	if (!hypervisor_is_type(X86_HYPER_QNX))
+		return 0;
+
+	if (!str)
+		return 0;
+	if (bar_override_rule_num >= MAX_OVERRIDE_RULES)
+		return 0;
+	ret = get_option(&str, &devfn);
+	if (ret == 2)
+		ret = get_option(&str, &pos);
+	if (ret == 2)
+		ret = get_option(&str, &width);
+	if (ret == 2)
+		addr = simple_strtoull(str, &str, 0);
+	if (*str == ',') {
+		str++;
+		size = simple_strtoull(str, &str, 0);
+		if (*str == 'K')
+			size *= SZ_1K;
+		else if (*str == 'M')
+			size *= SZ_1M;
+		else if (*str == 'G')
+			size *= SZ_1G;
+	}
+
+	if (ret != 2 || (width != 32 && width != 64))
+		return 0;
+
+	rule = bar_override_rules + bar_override_rule_num;
+	rule->devfn = devfn;
+	rule->pos = PCI_BASE_ADDRESS_0 + (pos << 2);
+	rule->width = width;
+	rule->addr = addr;
+	rule->size = size;
+	bar_override_rule_num++;
+
+	printk(KERN_INFO "PCI PATCH CFG: PCI bus 00:%02x.%d bar %d (%d bit) -> base 0x%llx, size 0x%llx\n",
+	       PCI_SLOT(devfn), PCI_FUNC(devfn), pos, width, addr, size);
+
+	return 1;
+}
+__setup("pci_bar_override=", parse_pci_bar_override);
+#endif
+static int get_predefined_bar(struct pci_dev *dev, unsigned int pos, u32 *val, u32 *sz)
+{
+#ifdef CONFIG_QNX_GUEST
+	int i;
+	bool patched = false;
+	struct bar_override_rule *rule;
+
+	if (!hypervisor_is_type(X86_HYPER_QNX))
+		return -1;
+
+	for (i = 0; i < bar_override_rule_num; i++) {
+		rule = bar_override_rules + i;
+		if (dev->devfn == rule->devfn) {
+			if (pos == rule->pos) {
+				*val = (u32)rule->addr;
+				*sz = (u32)~(rule->size - 1UL);
+				patched = true;
+			} else if (pos == (rule->pos + 4) && rule->width == 64) {
+				*val = rule->addr >> 32;
+				*sz = (~(rule->size - 1UL) >> 32);
+				patched = true;
+			}
+
+			if (patched) {
+				pci_info(dev, "PCI PATCH: BAR %d: val = 0x%x, sz = 0x%x\n",
+					(pos - PCI_BASE_ADDRESS_0) >> 2, *val, *sz);
+				return 0;
+			}
+		}
+	}
+
+	return -1;
+#else
+	return -1;
+#endif
+}
+
+
 #define PCI_COMMAND_DECODE_ENABLE	(PCI_COMMAND_MEMORY | PCI_COMMAND_IO)
 
 /**
@@ -194,10 +296,12 @@ int __pci_read_base(struct pci_dev *dev, enum pci_bar_type type,
 
 	res->name = pci_name(dev);
 
-	pci_read_config_dword(dev, pos, &l);
-	pci_write_config_dword(dev, pos, l | mask);
-	pci_read_config_dword(dev, pos, &sz);
-	pci_write_config_dword(dev, pos, l);
+	if (get_predefined_bar(dev, pos, &l, &sz) < 0) {
+		pci_read_config_dword(dev, pos, &l);
+		pci_write_config_dword(dev, pos, l | mask);
+		pci_read_config_dword(dev, pos, &sz);
+		pci_write_config_dword(dev, pos, l);
+	}
 
 	/*
 	 * All bits set in sz means the device isn't working properly.
@@ -236,10 +340,12 @@ int __pci_read_base(struct pci_dev *dev, enum pci_bar_type type,
 	}
 
 	if (res->flags & IORESOURCE_MEM_64) {
-		pci_read_config_dword(dev, pos + 4, &l);
-		pci_write_config_dword(dev, pos + 4, ~0);
-		pci_read_config_dword(dev, pos + 4, &sz);
-		pci_write_config_dword(dev, pos + 4, l);
+		if (get_predefined_bar(dev, pos + 4, &l, &sz) < 0) {
+			pci_read_config_dword(dev, pos + 4, &l);
+			pci_write_config_dword(dev, pos + 4, ~0);
+			pci_read_config_dword(dev, pos + 4, &sz);
+			pci_write_config_dword(dev, pos + 4, l);
+		}
 
 		l64 |= ((u64)l << 32);
 		sz64 |= ((u64)sz << 32);
