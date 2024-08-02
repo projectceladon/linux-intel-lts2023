@@ -23,6 +23,9 @@
 #include <linux/dmi.h>
 #include <linux/platform_data/x86/apple.h>
 #include "internal.h"
+#ifdef CONFIG_QNX_GUEST
+#include "asm/hypervisor.h"
+#endif
 
 #define ACPI_PCI_ROOT_CLASS		"pci_bridge"
 #define ACPI_PCI_ROOT_DEVICE_NAME	"PCI Root Bridge"
@@ -893,7 +896,46 @@ err:
 	res->flags |= IORESOURCE_DISABLED;
 #endif
 }
+#ifdef CONFIG_QNX_GUEST
+static phys_addr_t pci_root_upper_base;
+static phys_addr_t pci_root_upper_limit;
 
+static int __init parse_pci_root_upper_base(char *str)
+{
+	unsigned long value;
+	char *cur = str;
+
+	value = simple_strtoull(str, &cur, 0);
+	if (value > SZ_4G &&
+		(pci_root_upper_limit == 0 || pci_root_upper_base < pci_root_upper_limit)) {
+		pci_root_upper_base = value;
+		printk(KERN_INFO "PCI PATCH CFG: Base of upper PCI MMIO window -> 0x%llx\n",
+			pci_root_upper_base);
+		return 1;
+	}
+
+	return 0;
+}
+__setup("pci_root_upper_base=", parse_pci_root_upper_base);
+
+static int __init parse_pci_root_upper_limit(char *str)
+{
+	unsigned long value;
+	char *cur = str;
+
+	value = simple_strtoull(str, &cur, 0);
+	if (value > SZ_4G &&
+		(pci_root_upper_base == 0 || pci_root_upper_base < pci_root_upper_limit)) {
+		pci_root_upper_limit = value;
+		printk(KERN_INFO "PCI PATCH CFG: Limit of upper PCI MMIO window -> 0x%llx\n",
+			pci_root_upper_limit);
+		return 1;
+	}
+
+	return 0;
+}
+__setup("pci_root_upper_limit=", parse_pci_root_upper_limit);
+#endif
 int acpi_pci_probe_root_resources(struct acpi_pci_root_info *info)
 {
 	int ret;
@@ -901,6 +943,10 @@ int acpi_pci_probe_root_resources(struct acpi_pci_root_info *info)
 	struct acpi_device *device = info->bridge;
 	struct resource_entry *entry, *tmp;
 	unsigned long flags;
+#ifdef CONFIG_QNX_GUEST
+	bool enlarged = false;
+	struct resource_entry *last_mmio_entry = NULL;
+#endif
 
 	flags = IORESOURCE_IO | IORESOURCE_MEM | IORESOURCE_MEM_8AND16BIT;
 	ret = acpi_dev_get_resources(device, list,
@@ -918,11 +964,34 @@ int acpi_pci_probe_root_resources(struct acpi_pci_root_info *info)
 				acpi_pci_root_remap_iospace(&device->fwnode,
 						entry);
 
-			if (entry->res->flags & IORESOURCE_DISABLED)
+			if (entry->res->flags & IORESOURCE_DISABLED) {
 				resource_list_destroy_entry(entry);
-			else
-				entry->res->name = info->name;
+				continue;
+			}
+
+			entry->res->name = info->name;
+#ifdef CONFIG_QNX_GUEST
+			if (hypervisor_is_type(X86_HYPER_QNX) && !enlarged && pci_root_upper_base &&
+				(entry->res->flags & IORESOURCE_MEM) &&
+				entry->res->start > pci_root_upper_base) {
+				dev_info(&device->dev, "enlarge upper PCI window base: 0x%llx -> 0x%llx\n",
+					entry->res->start, pci_root_upper_base);
+				entry->res->start = pci_root_upper_base;
+				enlarged = true;
+			}
+			if (hypervisor_is_type(X86_HYPER_QNX) && pci_root_upper_base &&
+				pci_root_upper_limit && (entry->res->flags & IORESOURCE_MEM))
+				if (!last_mmio_entry || entry->res->end > last_mmio_entry->res->end)
+					last_mmio_entry = entry;
+#endif
 		}
+#ifdef CONFIG_QNX_GUEST
+		if (last_mmio_entry) {
+			dev_info(&device->dev, "enlarge upper PCI window limit: 0x%llx -> 0x%llx\n",
+				last_mmio_entry->res->end, pci_root_upper_limit);
+			last_mmio_entry->res->end = pci_root_upper_limit;
+		}
+#endif
 		acpi_pci_root_validate_resources(&device->dev, list,
 						 IORESOURCE_MEM);
 		acpi_pci_root_validate_resources(&device->dev, list,
