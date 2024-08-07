@@ -16,6 +16,7 @@
 
 #include "linux/virtio_pci_legacy.h"
 #include "virtio_pci_common.h"
+#include <asm/hypervisor.h>
 
 /* virtio config->get_features() implementation */
 static u64 vp_get_features(struct virtio_device *vdev)
@@ -122,7 +123,8 @@ static struct virtqueue *setup_vq(struct virtio_pci_device *vp_dev,
 
 	/* Check if queue is either not available or already active. */
 	num = vp_legacy_get_queue_size(&vp_dev->ldev, index);
-	if (!num || vp_legacy_get_queue_enable(&vp_dev->ldev, index))
+	if (!hypervisor_is_type(X86_HYPER_QNX) &&
+		(!num || vp_legacy_get_queue_enable(&vp_dev->ldev, index)))
 		return ERR_PTR(-ENOENT);
 
 	info->msix_vector = msix_vec;
