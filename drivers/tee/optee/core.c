@@ -14,6 +14,7 @@
 #if defined(CONFIG_OPTEE_IVSHMEM)
 #include <linux/pci.h>
 #include <linux/pci_regs.h>
+#include <linux/pci_ids.h>
 #endif
 #include <linux/platform_device.h>
 #include <linux/slab.h>
@@ -65,6 +66,8 @@ static DEFINE_SEMAPHORE(optee_smc_lock);
 
 #define OPTEE_SHM_SMC_SIZE	0x200000
 
+#define PCI_DEVICE_ID_INTEL0	0x1
+
 struct ivshmem_private {
 	struct pci_dev *dev;
 
@@ -90,7 +93,10 @@ struct ivshmem_private {
 static struct ivshmem_private g_ivshmem_dev;
 
 static struct pci_device_id ivshmem_id_table[] = {
-    { 0x1af4, 0x1110, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
+    { PCI_DEVICE_SUB(PCI_VENDOR_ID_REDHAT_QUMRANET,
+		     0x1110,   // the device id of IVSHMEM PCI device
+		     PCI_VENDOR_ID_INTEL,
+		     PCI_DEVICE_ID_INTEL0) },
     { 0 },
 };
 MODULE_DEVICE_TABLE(pci, ivshmem_id_table);
@@ -1299,7 +1305,8 @@ static int ivshmem_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	int ret;
 	int i;
 
-	pr_info("probing for ivshmem device: %s\n", pci_name(pdev));
+	pr_info("probing for ivshmem device: %s vendor 0x%x device 0x%x subvid 0x%x subdid 0x%x\n",
+			pci_name(pdev), id->vendor, id->device, id->subvendor, id->subdevice);
 
 	ret = pci_enable_device(pdev);
 	if (ret < 0) {
