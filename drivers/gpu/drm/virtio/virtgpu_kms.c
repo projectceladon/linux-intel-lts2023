@@ -244,6 +244,9 @@ int virtio_gpu_init(struct virtio_device *vdev, struct drm_device *dev)
 	if (virtio_has_feature(vgdev->vdev, VIRTIO_GPU_F_PIXEL_BLEND_MODE)) {
 		vgdev->has_pixel_blend_mode = true;
 	}
+	if (virtio_has_feature(vgdev->vdev, VIRTIO_GPU_F_MULTI_PLANAR_FORMAT)) {
+		vgdev->has_multi_planar = true;
+	}
 	if (virtio_has_feature(vgdev->vdev, VIRTIO_GPU_F_RESOURCE_BLOB)) {
 		vgdev->has_resource_blob = true;
 		if (virtio_has_feature(vgdev->vdev, VIRTIO_GPU_F_MODIFIER)) {

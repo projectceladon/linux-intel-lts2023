@@ -88,26 +88,6 @@ static const struct drm_framebuffer_funcs virtio_gpu_fb_funcs = {
 	.dirty = drm_atomic_helper_dirtyfb,
 };
 
-static int
-virtio_gpu_framebuffer_init(struct drm_device *dev,
-			    struct virtio_gpu_framebuffer *vgfb,
-			    const struct drm_mode_fb_cmd2 *mode_cmd,
-			    struct drm_gem_object *obj)
-{
-	int ret;
-
-	vgfb->base.obj[0] = obj;
-
-	drm_helper_mode_fill_fb_struct(dev, &vgfb->base, mode_cmd);
-
-	ret = drm_framebuffer_init(dev, &vgfb->base, &virtio_gpu_fb_funcs);
-	if (ret) {
-		vgfb->base.obj[0] = NULL;
-		return ret;
-	}
-	return 0;
-}
-
 static void virtio_gpu_crtc_mode_set_nofb(struct drm_crtc *crtc)
 {
 	struct drm_device *dev = crtc->dev;
@@ -387,27 +367,46 @@ virtio_gpu_user_framebuffer_create(struct drm_device *dev,
 {
 	struct drm_gem_object *obj = NULL;
 	struct virtio_gpu_framebuffer *virtio_gpu_fb;
+
+	const struct drm_format_info *info;
+	struct drm_gem_object *objs[DRM_FORMAT_MAX_PLANES];
+
+	unsigned int i;
 	int ret;
 
-	/* lookup object associated with res handle */
-	obj = drm_gem_object_lookup(file_priv, mode_cmd->handles[0]);
-	if (!obj)
+	info = drm_get_format_info(dev, mode_cmd);
+	if (!info) {
+		drm_dbg_kms(dev, "Failed to get FB format info\n");
 		return ERR_PTR(-EINVAL);
+	}
 
 	virtio_gpu_fb = kzalloc(sizeof(*virtio_gpu_fb), GFP_KERNEL);
 	if (virtio_gpu_fb == NULL) {
-		drm_gem_object_put(obj);
 		return ERR_PTR(-ENOMEM);
 	}
 
-	ret = virtio_gpu_framebuffer_init(dev, virtio_gpu_fb, mode_cmd, obj);
-	if (ret) {
-		kfree(virtio_gpu_fb);
-		drm_gem_object_put(obj);
-		return NULL;
+	for (i = 0; i < info->num_planes; i++) {
+		objs[i] = drm_gem_object_lookup(file_priv, mode_cmd->handles[i]);
+		if (!objs[i]) {
+			drm_dbg_kms(dev, "Failed to lookup GEM object\n");
+			goto error;
+		}
+		virtio_gpu_fb->base.obj[i] = objs[i];
 	}
 
+	drm_helper_mode_fill_fb_struct(dev, &virtio_gpu_fb->base, mode_cmd);
+	ret = drm_framebuffer_init(dev, &virtio_gpu_fb->base, &virtio_gpu_fb_funcs);
+	if (ret)
+		goto error;
+
 	return &virtio_gpu_fb->base;
+error:
+	kfree(virtio_gpu_fb);
+	while (i > 0) {
+		--i;
+		drm_gem_object_put(objs[i]);
+	}
+	return ERR_PTR(ret);
 }
 
 static const struct drm_mode_config_funcs virtio_gpu_mode_funcs = {

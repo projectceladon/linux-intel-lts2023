@@ -60,6 +60,7 @@ static int virtio_gpu_features(struct seq_file *m, void *data)
 	virtio_gpu_add_bool(m, "multi_plane", vgdev->has_multi_plane);
 	virtio_gpu_add_bool(m, "rotation", vgdev->has_rotation);
 	virtio_gpu_add_bool(m, "pixel_blend_mode", vgdev->has_pixel_blend_mode);
+	virtio_gpu_add_bool(m, "multi_planar", vgdev->has_multi_planar);
 	virtio_gpu_add_bool(m, "modifier", vgdev->has_modifier);
 	virtio_gpu_add_int(m, "cap sets", vgdev->num_capsets);
 	virtio_gpu_add_int(m, "scanouts", vgdev->num_scanouts);

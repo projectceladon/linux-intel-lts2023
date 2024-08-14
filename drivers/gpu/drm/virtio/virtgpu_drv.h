@@ -267,6 +267,7 @@ struct virtio_gpu_device {
 	bool has_multi_plane;
 	bool has_rotation;
 	bool has_pixel_blend_mode;
+	bool has_multi_planar;
 	bool has_indirect;
 	bool has_resource_assign_uuid;
 	bool has_resource_blob;
