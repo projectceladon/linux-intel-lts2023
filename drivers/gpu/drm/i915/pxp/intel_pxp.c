@@ -862,6 +862,23 @@ static bool pxp_action_needs_arb_session(u32 action)
 
 	return true;
 }
+int i915_pxp_bo_ops_ioctl(struct drm_device *dev, void *data, struct drm_file *drmfile)
+{
+	int ret = 0;
+	struct prelim_drm_i915_pxp_bo_ops *pxp_bo_ops = data;
+	struct drm_i915_private *i915 = to_i915(dev);
+	struct drm_i915_gem_object *obj;
+	if (!intel_pxp_is_enabled(i915->pxp))
+		return -ENODEV;
+
+	obj = i915_gem_object_lookup_rcu(drmfile, pxp_bo_ops->handle);
+	if (!obj) {
+		return -ENOENT;
+	}
+	obj->flags |= I915_BO_PROTECTED;
+	ret = intel_pxp_key_check(i915->pxp, obj, pxp_bo_ops->assign);
+	return ret;
+}
 
 int i915_pxp_ops_ioctl(struct drm_device *dev, void *data, struct drm_file *drmfile)
 {
@@ -955,6 +972,11 @@ void intel_pxp_close(struct intel_pxp *pxp, struct drm_file *drmfile)
 
 void intel_pxp_close(struct intel_pxp *pxp, struct drm_file *drmfile)
 {
+}
+
+int i915_pxp_bo_ops_ioctl(struct drm_device *dev, void *data, struct drm_file *drmfile)
+{
+	return -ENODEV;
 }
 
 int i915_pxp_ops_ioctl(struct drm_device *dev, void *data, struct drm_file *drmfile)
