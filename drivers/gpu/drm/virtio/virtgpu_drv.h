@@ -85,6 +85,7 @@ struct virtio_gpu_object_params {
 	uint32_t blob_mem;
 	uint32_t blob_flags;
 	uint64_t blob_id;
+	bool protected;
 };
 
 struct virtio_gpu_object {
@@ -103,6 +104,7 @@ struct virtio_gpu_object {
 	/* Address cache for prime object */
 	struct virtio_gpu_mem_entry *ents;
 	uint32_t nents;
+	bool protected;
 };
 #define gem_to_virtio_gpu_obj(gobj) \
 	container_of((gobj), struct virtio_gpu_object, base.base)
