@@ -817,6 +817,29 @@ void virtio_shmem_free_page(struct device *dev, struct page *page)
 	vi_dma_free(dev, PAGE_SIZE, addr, dma_handle, 0);
 }
 
+void *virtio_shmem_alloc(struct device *dev, size_t size)
+{
+	struct pci_dev *pci_dev = to_pci_dev(dev);
+	void *addr;
+	dma_addr_t dma_handle;
+
+	addr = vi_dma_alloc(dev, size, &dma_handle, 0, 0);
+	if (!addr)
+		return ERR_PTR(-ENOMEM);
+
+	return addr;
+}
+
+void virtio_shmem_free(struct device *dev, void *addr, size_t size)
+{
+	struct pci_dev *pci_dev = to_pci_dev(dev);
+	struct virtio_shmem_device *vi_dev = pci_get_drvdata(pci_dev);
+	dma_addr_t dma_handle;
+
+	dma_handle = addr - vi_dev->shmem;
+	vi_dma_free(dev, size, addr, dma_handle, 0);
+}
+
 #ifdef CONFIG_VIRTIO_IVSHMEM_DEBUG
 static ssize_t perf_stat_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
