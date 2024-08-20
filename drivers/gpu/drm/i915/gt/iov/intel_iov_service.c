@@ -430,6 +430,20 @@ static int pf_reply_update_ggtt(struct intel_iov *iov, u32 origin,
 					   response, ARRAY_SIZE(response));
 }
 
+static int pf_reply_pxp_query(struct intel_iov *iov, u32 origin,
+			   u32 relay_id, const u32 *msg, u32 len)
+{
+	struct intel_iov_relay *relay = &iov->relay;
+	struct drm_i915_private *i915 = iov_to_i915(iov);
+	u32 response[VF2PF_PXP_QUERY_RESPONSE_MSG_LEN];
+	response[0] = FIELD_PREP(GUC_HXG_MSG_0_ORIGIN, GUC_HXG_ORIGIN_HOST) |
+		      FIELD_PREP(GUC_HXG_MSG_0_TYPE, GUC_HXG_TYPE_RESPONSE_SUCCESS);
+	response[1] = i915->drm.primary->index;
+	response[2] = origin;
+	return intel_iov_relay_reply_to_vf(&iov->relay, origin, relay_id,
+					   response, ARRAY_SIZE(response));
+}
+
 /**
  * intel_iov_service_process_msg - Service request message from VF.
  * @iov: the IOV struct
@@ -469,6 +483,9 @@ int intel_iov_service_process_msg(struct intel_iov *iov, u32 origin,
 		break;
 	case IOV_ACTION_VF2PF_UPDATE_GGTT32:
 		err = pf_reply_update_ggtt(iov, origin, relay_id, msg, len);
+		break;
+	case IOV_ACTION_VF2PF_PXP_QUERY:
+		err = pf_reply_pxp_query(iov, origin, relay_id, msg, len);
 		break;
 	default:
 		break;
