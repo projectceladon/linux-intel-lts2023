@@ -1622,4 +1622,13 @@ struct snd_pcm_status32 {
 #define SNDRV_PCM_IOCTL_STATUS32	_IOR('A', 0x20, struct snd_pcm_status32)
 #define SNDRV_PCM_IOCTL_STATUS_EXT32	_IOWR('A', 0x24, struct snd_pcm_status32)
 
+#if defined(CONFIG_VIRTIO_IVSHMEM) && defined(CONFIG_SND_VIRTIO)
+bool virtsnd_pcm_is_ivshmem_region(struct snd_pcm_substream *substream);
+#else
+static inline bool virtsnd_pcm_is_ivshmem_region(struct snd_pcm_substream *substream)
+{
+    return false;
+}
+#endif
+
 #endif /* __SOUND_PCM_H */

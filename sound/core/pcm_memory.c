@@ -16,6 +16,7 @@
 #include <sound/info.h>
 #include <sound/initval.h>
 #include "pcm_local.h"
+#include "linux/virtio_shm.h"
 
 static int preallocate_dma = 1;
 module_param(preallocate_dma, int, 0444);
@@ -91,6 +92,52 @@ static void do_free_pages(struct snd_card *card, struct snd_dma_buffer *dmab)
 		return;
 	decrease_allocated_size(card, dmab->bytes);
 	snd_dma_free_pages(dmab);
+	dmab->area = NULL;
+}
+
+static int do_alloc_ivshmem_pages(struct snd_card *card, int type, struct device *dev,
+			  size_t size, struct snd_dma_buffer *dmab)
+{
+#ifdef CONFIG_VIRTIO_IVSHMEM
+	/* check and reserve the requested size */
+	mutex_lock(&card->memory_mutex);
+	if (max_alloc_per_card &&
+	    card->total_pcm_alloc_bytes + size > max_alloc_per_card) {
+		mutex_unlock(&card->memory_mutex);
+		return -ENOMEM;
+	}
+	__update_allocated_size(card, size);
+	mutex_unlock(&card->memory_mutex);
+
+	size = PAGE_ALIGN(size);
+	dmab->dev.type = type;
+	dmab->dev.dev = dev;
+	dmab->bytes = 0;
+	dmab->addr = 0;
+	dmab->private_data = NULL;
+	dmab->area = virtio_shmem_alloc(dev, size);
+	if (dmab->area) {
+		/* the actual allocation size might be bigger than requested,
+		 * and we need to correct the account
+		 */
+		if (dmab->bytes != size)
+			update_allocated_size(card, dmab->bytes - size);
+		return -ENOMEM;
+	} else {
+		/* take back on allocation failure */
+		decrease_allocated_size(card, size);
+	}
+	dmab->bytes = size;
+#endif
+	return 0;
+}
+
+static void do_free_ivshmem_pages(struct snd_card *card, struct snd_dma_buffer *dmab)
+{
+	if (!dmab->area)
+		return;
+	decrease_allocated_size(card, dmab->bytes);
+	virtio_shmem_free(dmab->dev.dev, dmab->area, dmab->bytes);
 	dmab->area = NULL;
 }
 
@@ -456,17 +503,31 @@ int snd_pcm_lib_malloc_pages(struct snd_pcm_substream *substream, size_t size)
 		if (! dmab)
 			return -ENOMEM;
 		dmab->dev = substream->dma_buffer.dev;
-		if (do_alloc_pages(card,
-				   substream->dma_buffer.dev.type,
-				   substream->dma_buffer.dev.dev,
-				   substream->stream,
-				   size, dmab) < 0) {
-			kfree(dmab);
-			pr_debug("ALSA pcmC%dD%d%c,%d:%s: cannot preallocate for size %zu\n",
-				 substream->pcm->card->number, substream->pcm->device,
-				 substream->stream ? 'c' : 'p', substream->number,
-				 substream->pcm->name, size);
-			return -ENOMEM;
+		if (virtsnd_pcm_is_ivshmem_region(substream)) {
+			if (do_alloc_ivshmem_pages(card,
+					substream->dma_buffer.dev.type,
+					substream->dma_buffer.dev.dev,
+					size, dmab) < 0) {
+				kfree(dmab);
+				pr_debug("ALSA pcmC%dD%d%c,%d:%s: cannot preallocate for size %zu\n",
+					substream->pcm->card->number, substream->pcm->device,
+					substream->stream ? 'c' : 'p', substream->number,
+					substream->pcm->name, size);
+				return -ENOMEM;
+			}
+		} else {
+			if (do_alloc_pages(card,
+					substream->dma_buffer.dev.type,
+					substream->dma_buffer.dev.dev,
+					substream->stream,
+					size, dmab) < 0) {
+				kfree(dmab);
+				pr_debug("ALSA pcmC%dD%d%c,%d:%s: cannot preallocate for size %zu\n",
+					substream->pcm->card->number, substream->pcm->device,
+					substream->stream ? 'c' : 'p', substream->number,
+					substream->pcm->name, size);
+				return -ENOMEM;
+			}
 		}
 	}
 	snd_pcm_set_runtime_buffer(substream, dmab);
@@ -496,7 +557,11 @@ int snd_pcm_lib_free_pages(struct snd_pcm_substream *substream)
 		struct snd_card *card = substream->pcm->card;
 
 		/* it's a newly allocated buffer.  release it now. */
-		do_free_pages(card, runtime->dma_buffer_p);
+		if (virtsnd_pcm_is_ivshmem_region(substream)) {
+			do_free_ivshmem_pages(card, runtime->dma_buffer_p);
+		} else {
+			do_free_pages(card, runtime->dma_buffer_p);
+		}
 		kfree(runtime->dma_buffer_p);
 	}
 	snd_pcm_set_runtime_buffer(substream, NULL);

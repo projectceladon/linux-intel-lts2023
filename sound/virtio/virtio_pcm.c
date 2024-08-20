@@ -513,3 +513,23 @@ void virtsnd_pcm_event(struct virtio_snd *snd, struct virtio_snd_event *event)
 		break;
 	}
 }
+#ifdef CONFIG_VIRTIO_IVSHMEM
+bool virtsnd_pcm_is_ivshmem_region(struct snd_pcm_substream *substream)
+{
+	struct snd_card *card;
+	struct virtio_pcm_substream *vss;
+
+	card = substream->pcm->card;
+	if (strcmp(card->driver, "virtio-snd") != 0)
+		return false;
+
+	vss = snd_pcm_substream_chip(substream);
+	printk("driver %s\n", vss->snd->vdev->dev.driver->name);
+	if (strcmp(vss->snd->vdev->dev.driver->name, "virtio-ivshmem") == 0 ||
+		strcmp(vss->snd->vdev->dev.driver->name, "virtio-guest-shm") == 0) {
+		return true;
+	}
+
+	return false;
+}
+#endif
