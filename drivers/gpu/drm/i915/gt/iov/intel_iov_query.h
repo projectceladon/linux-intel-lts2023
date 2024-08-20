@@ -19,5 +19,6 @@ int intel_iov_query_update_ggtt_ptes(struct intel_iov *iov);
 void intel_iov_query_fini(struct intel_iov *iov);
 
 void intel_iov_query_print_config(struct intel_iov *iov, struct drm_printer *p);
+int pxp_info_query(struct intel_iov *iov, int *device_idx, int *device_vfid);
 
 #endif /* __INTEL_IOV_QUERY_H__ */
