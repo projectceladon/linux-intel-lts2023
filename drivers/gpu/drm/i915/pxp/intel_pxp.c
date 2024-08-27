@@ -18,6 +18,7 @@
 #include "intel_pxp_session.h"
 #include "intel_pxp_tee.h"
 #include "intel_pxp_types.h"
+#include "virt/intel_pxp_fe.h"
 
 /**
  * DOC: PXP
@@ -49,16 +50,22 @@
 
 bool intel_pxp_is_supported(const struct intel_pxp *pxp)
 {
+	if (intel_pxp_is_in_vf(pxp))
+		return intel_pxp_fe_is_supported(pxp);
 	return IS_ENABLED(CONFIG_DRM_I915_PXP) && pxp;
 }
 
 bool intel_pxp_is_enabled(const struct intel_pxp *pxp)
 {
+	if (intel_pxp_is_in_vf(pxp))
+		return intel_pxp_fe_is_enabled(pxp);
 	return IS_ENABLED(CONFIG_DRM_I915_PXP) && pxp && pxp->ce;
 }
 
 bool intel_pxp_is_active(const struct intel_pxp *pxp)
 {
+	if (intel_pxp_is_in_vf(pxp))
+		return intel_pxp_fe_is_active(pxp);
 	return IS_ENABLED(CONFIG_DRM_I915_PXP) && pxp && pxp->arb_session.is_valid;
 }
 
@@ -200,6 +207,8 @@ int intel_pxp_init(struct drm_i915_private *i915)
 {
 	struct intel_gt *gt;
 	bool is_full_feature = false;
+	if (IS_SRIOV_VF(i915))
+		return intel_pxp_fe_init(i915);
 
 	if (intel_gt_is_wedged(to_gt(i915))) {
 		drm_err(&i915->drm, "Failed to init pxp due to not connected\n");
@@ -231,6 +240,7 @@ int intel_pxp_init(struct drm_i915_private *i915)
 	}
 
 	/* init common info used by all feature-mode usages*/
+	i915->pxp->vf = false;
 	i915->pxp->ctrl_gt = gt;
 	mutex_init(&i915->pxp->tee_mutex);
 
@@ -249,6 +259,8 @@ int intel_pxp_init(struct drm_i915_private *i915)
 
 void intel_pxp_fini(struct drm_i915_private *i915)
 {
+	if (IS_SRIOV_VF(i915))
+		return intel_pxp_fe_fini(i915);
 	if (!i915->pxp)
 		return;
 
@@ -269,6 +281,8 @@ void intel_pxp_fini(struct drm_i915_private *i915)
 
 void intel_pxp_mark_termination_in_progress(struct intel_pxp *pxp)
 {
+	if (intel_pxp_is_in_vf(pxp))
+		return intel_pxp_fe_mark_termination_in_progress(pxp);
 	pxp->hw_state_invalidated = true;
 	pxp->arb_session.is_valid = false;
 	pxp->arb_session.tag = 0;
@@ -304,6 +318,8 @@ static bool pxp_component_bound(struct intel_pxp *pxp)
 
 int intel_pxp_get_backend_timeout_ms(struct intel_pxp *pxp)
 {
+	if (intel_pxp_is_in_vf(pxp))
+		return intel_pxp_fe_get_backend_timeout_ms(pxp);
 	if (HAS_ENGINE(pxp->ctrl_gt, GSC0))
 		return GSCFW_MAX_ROUND_TRIP_LATENCY_MS;
 	else
@@ -362,8 +378,11 @@ static int __pxp_global_teardown_restart(struct intel_pxp *pxp)
 
 void intel_pxp_end(struct intel_pxp *pxp)
 {
-	struct drm_i915_private *i915 = pxp->ctrl_gt->i915;
+	struct drm_i915_private *i915;
 	intel_wakeref_t wakeref;
+	if (intel_pxp_is_in_vf(pxp))
+		return intel_pxp_fe_end(pxp);
+	i915 = pxp->ctrl_gt->i915;
 
 	if (!intel_pxp_is_enabled(pxp))
 		return;
@@ -407,6 +426,9 @@ static bool pxp_fw_dependencies_completed(struct intel_pxp *pxp)
  */
 int intel_pxp_get_readiness_status(struct intel_pxp *pxp, int timeout_ms)
 {
+	if (intel_pxp_is_in_vf(pxp))
+		return intel_pxp_fe_get_readiness_status(pxp, timeout_ms);
+
 	if (!intel_pxp_is_enabled(pxp)) {
 		drm_err(&pxp->ctrl_gt->i915->drm,
 			"Failed to get readiness due to PXP not enabled\n");
@@ -443,7 +465,8 @@ int intel_pxp_get_readiness_status(struct intel_pxp *pxp, int timeout_ms)
 int intel_pxp_start(struct intel_pxp *pxp)
 {
 	int ret = 0;
-
+	if (intel_pxp_is_in_vf(pxp))
+		return intel_pxp_fe_start(pxp);
 	ret = intel_pxp_get_readiness_status(pxp, PXP_READINESS_TIMEOUT);
 	if (ret < 0) {
 		drm_err(&pxp->ctrl_gt->i915->drm,
@@ -479,12 +502,16 @@ unlock:
 
 void intel_pxp_init_hw(struct intel_pxp *pxp)
 {
+	if (intel_pxp_is_in_vf(pxp))
+		return intel_pxp_fe_init_hw(pxp);
 	kcr_pxp_enable(pxp);
 	intel_pxp_irq_enable(pxp);
 }
 
 void intel_pxp_fini_hw(struct intel_pxp *pxp)
 {
+	if (intel_pxp_is_in_vf(pxp))
+		return intel_pxp_fe_fini_hw(pxp);
 	kcr_pxp_disable(pxp);
 	intel_pxp_irq_disable(pxp);
 }
@@ -493,6 +520,9 @@ int intel_pxp_key_check(struct intel_pxp *pxp,
 			struct drm_i915_gem_object *obj,
 			bool assign)
 {
+	if (intel_pxp_is_in_vf(pxp))
+		return intel_pxp_fe_key_check(pxp, obj, assign);
+
 	if (!intel_pxp_is_active(pxp)) {
 		return -ENODEV;
 	}
@@ -521,9 +551,12 @@ int intel_pxp_key_check(struct intel_pxp *pxp,
 
 void intel_pxp_invalidate(struct intel_pxp *pxp)
 {
-	struct drm_i915_private *i915 = pxp->ctrl_gt->i915;
+	struct drm_i915_private *i915;
 	struct i915_gem_context *ctx, *cn;
-
+	if (intel_pxp_is_in_vf(pxp))
+		i915 = pxp->fe.i915;
+	else
+		i915 = pxp->ctrl_gt->i915;
 	/* ban all contexts marked as protected */
 	spin_lock_irq(&i915->gem.contexts.lock);
 	list_for_each_entry_safe(ctx, cn, &i915->gem.contexts.list, link) {
@@ -838,6 +871,9 @@ int i915_pxp_ops_ioctl(struct drm_device *dev, void *data, struct drm_file *drmf
 	struct intel_pxp *pxp = i915->pxp;
 	intel_wakeref_t wakeref;
 
+	if (intel_pxp_is_in_vf(pxp))
+		return i915_pxp_fe_ops_ioctl(dev, data, drmfile);
+
 	if (!intel_pxp_is_enabled(pxp))
 		return -ENODEV;
 
@@ -903,6 +939,8 @@ out_pm:
 
 void intel_pxp_close(struct intel_pxp *pxp, struct drm_file *drmfile)
 {
+	if (intel_pxp_is_in_vf(pxp))
+		return intel_pxp_fe_close(pxp, drmfile);
 	if (!intel_pxp_is_enabled(pxp) || !drmfile)
 		return;
 
