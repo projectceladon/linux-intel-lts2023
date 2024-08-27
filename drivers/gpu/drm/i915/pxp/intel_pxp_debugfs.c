@@ -75,7 +75,10 @@ void intel_pxp_debugfs_register(struct intel_pxp *pxp)
 	if (!intel_pxp_is_supported(pxp))
 		return;
 
-	minor = pxp->ctrl_gt->i915->drm.primary;
+	if (pxp->vf)
+		minor = pxp->fe.i915->drm.primary;
+	else
+		minor = pxp->ctrl_gt->i915->drm.primary;
 	if (!minor->debugfs_root)
 		return;
 
@@ -86,6 +89,8 @@ void intel_pxp_debugfs_register(struct intel_pxp *pxp)
 	debugfs_create_file("info", 0444, pxproot,
 			    pxp, &pxp_info_fops);
 
-	debugfs_create_file("terminate_state", 0644, pxproot,
-			    pxp, &pxp_terminate_fops);
+
+	if (!pxp->vf)
+		debugfs_create_file("terminate_state", 0644, pxproot,
+				 pxp, &pxp_terminate_fops);
 }
