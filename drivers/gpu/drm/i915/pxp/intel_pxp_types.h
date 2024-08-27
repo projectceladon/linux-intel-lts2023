@@ -10,6 +10,7 @@
 #include <linux/mutex.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
+#include "virt/virtpxp_drv.h"
 
 struct drm_i915_private;
 
@@ -40,6 +41,23 @@ struct intel_pxp_session {
 	bool is_valid;
 
 	u32 tag;
+};
+
+struct intel_pxp_fe {
+	struct drm_i915_private *i915;
+	bool enabled;
+	bool active;
+	struct mutex session_mutex;
+	int device_idx;
+	int device_vfid;
+	int max_sessions;
+	int avail_sessions;
+	struct virtio_pxp *vpxp;
+	spinlock_t irq_lock;
+	struct intel_pxp_session hwdrm_sessions[INTEL_PXP_MAX_HWDRM_SESSIONS];
+	u32 key_instance;
+	struct work_struct session_work;
+	u32 session_events;
 };
 
 /**
@@ -165,6 +183,8 @@ struct intel_pxp {
 #define PXP_TERMINATION_COMPLETE BIT(1)
 #define PXP_INVAL_REQUIRED       BIT(2)
 #define PXP_EVENT_TYPE_IRQ       BIT(3)
+	bool vf;
+	struct intel_pxp_fe fe;
 };
 
 #endif /* __INTEL_PXP_TYPES_H__ */

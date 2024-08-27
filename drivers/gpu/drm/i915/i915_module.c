@@ -18,6 +18,9 @@
 #include "i915_selftest.h"
 #include "i915_vma.h"
 #include "i915_vma_resource.h"
+#ifdef CONFIG_DRM_I915_PXP
+#include "pxp/virt/virtpxp_drv.h"
+#endif
 
 static int i915_check_nomodeset(void)
 {
@@ -68,6 +71,10 @@ static const struct {
 	{ .init = i915_mock_selftests },
 	{ .init = i915_pmu_init,
 	  .exit = i915_pmu_exit },
+#ifdef CONFIG_DRM_I915_PXP
+	{ .init = virtio_pxp_init,
+	  .exit = virtio_pxp_exit},
+#endif
 	{ .init = i915_pci_register_driver,
 	  .exit = i915_pci_unregister_driver },
 	{ .init = i915_perf_sysctl_register,
