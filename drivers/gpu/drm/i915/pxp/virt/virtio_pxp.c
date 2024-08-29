@@ -40,12 +40,10 @@ static void virtpxp_recv_events(struct virtqueue *vq)
 	unsigned int *event;
 	unsigned long flags;
 	unsigned int len;
-	printk("bosheng virtpxp_recv_events\n");
 
 	spin_lock_irqsave(&vpxp->event_lock, flags);
 	while ((event = virtqueue_get_buf(vq, &len)) != NULL) {
 		spin_unlock_irqrestore(&vpxp->event_lock, flags);
-		printk("bosheng virtpxp_recv_events 1\n");
 		spin_lock_irqsave(&pxp_lock, flags);
 		if (vpxp->irq_recv)
 			vpxp->irq_recv(*event, vpxp->cb_priv);
@@ -64,12 +62,10 @@ static void virtpxp_control(struct virtqueue *vq)
 	unsigned long flags;
 	unsigned int len;
 
-	printk("bosheng virtpxp_control\n");
 	spin_lock_irqsave(&vpxp->control_lock, flags);
 	while ((request = virtqueue_get_buf(vq, &len)) != NULL) {
 		spin_unlock_irqrestore(&vpxp->control_lock, flags);
 		request->rxlen = len;
-		printk("bosheng virtpxp_control completion\n");
 		complete(&request->completion);
 		spin_lock_irqsave(&vpxp->control_lock, flags);
 	}
@@ -96,7 +92,7 @@ static int virtpxp_init_vqs(struct virtio_pxp *vpxp)
 static void vpxp_free(struct kref *kref)
 {
 	struct virtio_pxp *vpxp;
-	printk("bosheng vpxp_free\n");
+	printk("vpxp device free\n");
 	vpxp  = container_of(kref, typeof(*vpxp), ref);
 	kfree(vpxp);
 	vpxp = NULL;

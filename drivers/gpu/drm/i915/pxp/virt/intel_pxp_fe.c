@@ -116,7 +116,7 @@ static void pxp_fe_session_work(struct work_struct *work)
 	if (!events)
 		return;
 
-	printk("PXP FE: processing event-flags 0x%08x", events);
+	//printk("PXP FE: processing event-flags 0x%08x", events);
 
 	if (events & PXP_INVAL_REQUIRED) {
 		intel_pxp_invalidate(pxp_fe->i915->pxp);
@@ -143,7 +143,7 @@ int pxp_bind(void *gpu_priv, void *pxp_priv)
 	struct virtio_pxp *vpxp = (struct virtio_pxp *)pxp_priv;
 	if (!pxp || !vpxp)
 		return -1;
-	printk("pxp bind\n");
+	printk("%s\n",__FUNCTION__);
 	pxp->fe.vpxp = vpxp;
 	pxp->fe.enabled = true;
 	pxp->fe.max_sessions = vpxp->sessions;
@@ -159,7 +159,7 @@ void pxp_unbind(void *gpu_priv)
 	struct intel_pxp *pxp = (struct intel_pxp *)gpu_priv;
 	if (!pxp)
 		return;
-	printk("pxp unbind\n");
+	printk("%s\n",__FUNCTION__);
 	pxp->fe.enabled = false;
 }
 
@@ -320,7 +320,7 @@ int intel_pxp_fe_sm_ioctl_reserve_session(struct intel_pxp *pxp, struct drm_file
 	ret = virtio_set_session(pxp->fe.vpxp, &params);
 	*pxp_tag = params.pxp_tag;
 	session_id = *pxp_tag & PRELIM_DRM_I915_PXP_TAG_SESSION_ID_MASK;
-	printk("%s, session_id:%d, ret:%d\n",__FUNCTION__, session_id, ret);
+	//printk("%s, session_id:%d, ret:%d\n",__FUNCTION__, session_id, ret);
 	if (session_id >= INTEL_PXP_MAX_HWDRM_SESSIONS || session_id < 0) {
 		DRM_ERROR("PXP FE: invalid session id:%d", session_id);
 		return -1;
@@ -349,7 +349,7 @@ int intel_pxp_fe_sm_ioctl_mark_session_in_play(struct intel_pxp *pxp,
 	params.pxp_tag = session_id;
 	params.req_session_state = PRELIM_DRM_I915_PXP_REQ_SESSION_IN_PLAY;
 	ret = virtio_set_session(pxp->fe.vpxp, &params);
-	printk("%s, session_id:%d, ret:%d\n",__FUNCTION__, session_id, ret);
+	//printk("%s, session_id:%d, ret:%d\n",__FUNCTION__, session_id, ret);
 	if (ret < 0)
 		return ret;
 	pxp->fe.hwdrm_sessions[session_id].is_valid = true;
@@ -374,7 +374,7 @@ int intel_pxp_fe_sm_ioctl_terminate_session(struct intel_pxp *pxp,
 	params.pxp_tag = session_id;
 	params.req_session_state = PRELIM_DRM_I915_PXP_REQ_SESSION_TERMINATE;
 	ret = virtio_set_session(pxp->fe.vpxp, &params);
-	printk("%s, session_id:%d, ret:%d\n",__FUNCTION__, session_id, ret);
+	//printk("%s, session_id:%d, ret:%d\n",__FUNCTION__, session_id, ret);
 	return ret;
 }
 
@@ -394,7 +394,7 @@ int intel_pxp_fe_io_message(struct intel_pxp *pxp,
 	params.msg_out = (u64)msg_out;
 	params.msg_out_buf_size = msg_out_max_size;
 	ret = virtio_io_msg(pxp->fe.vpxp, &params);
-	printk("%s, ret:%d, ret size:%d\n",__FUNCTION__,  ret, params.msg_out_ret_size);
+	//printk("%s, ret:%d, ret size:%d\n",__FUNCTION__,  ret, params.msg_out_ret_size);
 	*msg_out_rcv_size = params.msg_out_ret_size;
 	return ret;
 }
@@ -416,7 +416,7 @@ int intel_pxp_fe_sm_ioctl_query_pxp_tag(struct intel_pxp *pxp,
 	ret = virtio_query_tag(pxp->fe.vpxp, &params);
 	*pxp_tag = params.pxp_tag;
 	*session_is_alive = params.session_is_alive;
-	printk("%s, ret:%d\n",__FUNCTION__,  ret);
+	//printk("%s, ret:%d\n",__FUNCTION__,  ret);
 	return ret;
 }
 
