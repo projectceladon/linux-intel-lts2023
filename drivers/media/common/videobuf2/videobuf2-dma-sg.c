@@ -21,6 +21,7 @@
 #include <media/videobuf2-v4l2.h>
 #include <media/videobuf2-memops.h>
 #include <media/videobuf2-dma-sg.h>
+#include "linux/virtio_shm.h"
 
 static int debug;
 module_param(debug, int, 0644);
@@ -105,6 +106,8 @@ static void *vb2_dma_sg_alloc(struct vb2_buffer *vb, struct device *dev,
 	struct sg_table *sgt;
 	int ret;
 	int num_pages;
+	int i;
+	struct scatterlist *sg;
 
 	if (WARN_ON(!dev) || WARN_ON(!size))
 		return ERR_PTR(-EINVAL);
@@ -130,9 +133,25 @@ static void *vb2_dma_sg_alloc(struct vb2_buffer *vb, struct device *dev,
 	if (!buf->pages)
 		goto fail_pages_array_alloc;
 
-	ret = vb2_dma_sg_alloc_compacted(buf, vb->vb2_queue->gfp_flags);
-	if (ret)
-		goto fail_pages_alloc;
+	if (strcmp(dev->driver->name, "virtio-ivshmem") == 0 ||
+			strcmp(dev->driver->name, "virtio-guest-shm") == 0) {
+		pr_err("%s: alloc memory from ivshmem begin\n",  __func__);
+		for(i = 0; i < buf->num_pages; i++) {
+			buf->pages[i] = virtio_shmem_allocate_page(dev);
+			if (!buf->pages[i]) {
+				while(i > 0) {
+					virtio_shmem_free_page(dev, buf->pages[i-1]);
+					i--;
+				};
+				goto fail_pages_array_alloc;
+			}
+		}
+		pr_err("%s: alloc memory from ivshmem end\n",  __func__);
+	} else {
+		ret = vb2_dma_sg_alloc_compacted(buf, vb->vb2_queue->gfp_flags);
+		if (ret)
+			goto fail_pages_alloc;
+	}
 
 	ret = sg_alloc_table_from_pages(buf->dma_sgt, buf->pages,
 			buf->num_pages, 0, size, GFP_KERNEL);
@@ -190,8 +209,17 @@ static void vb2_dma_sg_put(void *buf_priv)
 		if (buf->vaddr)
 			vm_unmap_ram(buf->vaddr, buf->num_pages);
 		sg_free_table(buf->dma_sgt);
-		while (--i >= 0)
-			__free_page(buf->pages[i]);
+
+		if (strcmp(buf->dev->driver->name, "virtio-ivshmem") == 0 ||
+				strcmp(buf->dev->driver->name, "virtio-guest-shm") == 0) {
+			while (--i >= 0) {
+				virtio_shmem_free_page(buf->dev, buf->pages[i]);
+			};
+		} else {
+			while (--i >= 0)
+				__free_page(buf->pages[i]);
+		}
+
 		kvfree(buf->pages);
 		put_device(buf->dev);
 		kfree(buf);
