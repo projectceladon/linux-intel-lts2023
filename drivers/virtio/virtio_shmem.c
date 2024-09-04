@@ -616,6 +616,14 @@ static dma_addr_t page_to_dma_addr(struct virtio_shmem_device *vi_dev, struct pa
 	return dma_handle;
 }
 
+dma_addr_t virtio_shmem_page_to_dma_addr(struct device *dev, struct page *page)
+{
+	struct pci_dev *pci_dev = to_pci_dev(dev);
+	struct virtio_shmem_device *vi_dev = pci_get_drvdata(pci_dev);
+
+	return page_to_dma_addr(vi_dev, page);
+}
+
 static void *vi_dma_alloc(struct device *dev, size_t size,
 			  dma_addr_t *dma_handle, gfp_t flag,
 			  unsigned long attrs)

@@ -10,6 +10,7 @@
 #ifdef CONFIG_VIRTIO_IVSHMEM
 struct page *virtio_shmem_allocate_page(struct device *dev);
 void virtio_shmem_free_page(struct device *dev, struct page *page);
+dma_addr_t virtio_shmem_page_to_dma_addr(struct device *dev, struct page *page);
 #else
 static inline struct page *virtio_shmem_allocate_page(struct device *dev)
 {
