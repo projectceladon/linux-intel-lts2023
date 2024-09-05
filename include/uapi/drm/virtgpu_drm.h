@@ -98,6 +98,7 @@ struct drm_virtgpu_execbuffer {
 #define VIRTGPU_PARAM_CONTEXT_INIT 6 /* DRM_VIRTGPU_CONTEXT_INIT */
 #define VIRTGPU_PARAM_SUPPORTED_CAPSET_IDs 7 /* Bitmask of supported capability set ids */
 #define VIRTGPU_PARAM_QUERY_DEV 11 /* Query the virtio device name. */
+#define VIRTGPU_PARAM_ALLOW_P2P 12 /* do we accept local memory addresses */
 
 struct drm_virtgpu_getparam {
 	__u64 param;
