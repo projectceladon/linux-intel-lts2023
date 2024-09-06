@@ -164,6 +164,10 @@ struct drm_gem_object *virtgpu_gem_prime_import(struct drm_device *dev,
 		}
 	}
 
+	if (strcmp(dev->dev->driver->name, "virtio-ivshmem") == 0 ||
+			strcmp(dev->dev->driver->name, "virtio-guest-shm") == 0)
+		return ERR_PTR(-EINVAL);
+
 	if (!dev->driver->gem_prime_import_sg_table)
 		return ERR_PTR(-EINVAL);
 	attach = ____dma_buf_dynamic_attach(dma_buf, attach_dev, NULL, NULL,

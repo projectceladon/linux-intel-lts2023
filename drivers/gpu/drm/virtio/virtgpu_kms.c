@@ -282,6 +282,12 @@ int virtio_gpu_init(struct virtio_device *vdev, struct drm_device *dev)
 		 vgdev->has_resource_blob ? '+' : '-',
 		 vgdev->has_host_visible ? '+' : '-');
 
+	DRM_INFO("features: %cscaling %cvblank %cmodifier %cmulti_plane",
+		 vgdev->has_scaling ? '+' : '-',
+		 vgdev->has_vblank ? '+' : '-',
+		 vgdev->has_modifier ? '+' : '-',
+		 vgdev->has_multi_plane ? '+' : '-');
+
 	DRM_INFO("features: %ccontext_init\n",
 		 vgdev->has_context_init ? '+' : '-');
 
