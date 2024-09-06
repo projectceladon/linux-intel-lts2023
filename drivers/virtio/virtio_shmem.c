@@ -17,6 +17,7 @@
 #include <linux/virtio_ids.h>
 #include <linux/virtio_pci.h>
 #include <linux/guest_shm.h>
+#include <asm/hypervisor.h>
 
 #include "virtio_shmem.h"
 
@@ -94,7 +95,11 @@ static bool vi_reg_write(struct virtio_shmem_device *vi_dev, unsigned int reg,
 	virt_wmb();
 
 	vi_dev->notify_peer(vi_dev, 0);
-
+	/* delay a short time for BE to update config space */
+	if (vi_dev->vdev.id.device == VIRTIO_ID_INPUT &&
+		hypervisor_is_type(X86_HYPER_QNX)) {
+		mdelay(1);
+	}
 	return true;
 }
 
