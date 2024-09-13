@@ -75,7 +75,7 @@
 
 #define VIRTIO_GPU_F_VBLANK              7
 
-#define VIRTIO_GPU_F_ALLOW_P2P           31
+#define VIRTIO_GPU_F_ALLOW_P2P           13
 
 /*
  * VIRTIO_GPU_CMD_FLUSH_SPRITE
