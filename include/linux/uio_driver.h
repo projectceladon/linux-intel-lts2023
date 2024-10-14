@@ -122,7 +122,7 @@ struct uio_info {
 	int (*irqcontrol)(struct uio_info *info, s32 irq_on);
 #ifdef CONFIG_PCI_MSI
 	int (*ioctl)(struct uio_info *info, unsigned int cmd,
-			unsigned long arg);
+			unsigned long arg, unsigned long user);
 #endif
 	ANDROID_KABI_RESERVE(1);
 };

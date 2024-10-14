@@ -574,7 +574,7 @@ static long uio_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 	if (!idev->info->ioctl)
 		return -ENOTTY;
 
-	return idev->info->ioctl(idev->info, cmd, arg);
+	return idev->info->ioctl(idev->info, cmd, arg, (unsigned long)filep);
 }
 #endif
 

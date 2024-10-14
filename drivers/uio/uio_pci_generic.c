@@ -34,9 +34,21 @@
 #define DRIVER_DESC	"Generic UIO driver for PCI 2.3 devices"
 
 #ifdef CONFIG_PCI_MSI
+struct uio_eventfd_info {
+	unsigned long  user;
+	struct         list_head list;
+	struct         eventfd_ctx *evt;
+};
+
+struct  uio_msix_vector_event {
+	int               irq;
+	spinlock_t        list_lock;
+	struct list_head  evt_list_head;
+};
+
 struct uio_msix_info {
 	struct msix_entry *entries;
-	struct eventfd_ctx **evts;
+	struct uio_msix_vector_event *vector_evts;
 	int nvecs;
 };
 #endif
@@ -52,17 +64,24 @@ struct uio_pci_generic_dev {
 #ifdef CONFIG_PCI_MSI
 static irqreturn_t uio_msix_handler(int irq, void *arg)
 {
-	struct eventfd_ctx *evt = arg;
+	struct uio_eventfd_info *evt_info;
+	struct  uio_msix_vector_event *vector_evt;
 
-	eventfd_signal(evt, 1);
+	vector_evt = (struct uio_msix_vector_event *)arg;
+	spin_lock(&vector_evt->list_lock);
+	list_for_each_entry(evt_info, &vector_evt->evt_list_head, list) {
+		eventfd_signal(evt_info->evt, 1);
+	}
+	spin_unlock(&vector_evt->list_lock);
 	return IRQ_HANDLED;
 }
 
 static int map_msix_eventfd(struct uio_pci_generic_dev *gdev,
-		int fd, int vector)
+		unsigned long user, int fd, int vector)
 {
-	int irq, err;
 	struct eventfd_ctx *evt;
+	struct uio_eventfd_info *evt_info;
+	struct  uio_msix_vector_event *vector_evt;
 
 	/* Passing -1 is used to disable interrupt */
 	if (fd < 0) {
@@ -73,30 +92,30 @@ static int map_msix_eventfd(struct uio_pci_generic_dev *gdev,
 	if (vector >= gdev->msix_info.nvecs)
 		return -EINVAL;
 
-	irq = gdev->msix_info.entries[vector].vector;
-	evt = gdev->msix_info.evts[vector];
-	if (evt) {
-		free_irq(irq, evt);
-		eventfd_ctx_put(evt);
-		gdev->msix_info.evts[vector] = NULL;
-	}
-
 	evt = eventfd_ctx_fdget(fd);
 	if (!evt)
 		return -EINVAL;
 
-	err = request_irq(irq, uio_msix_handler, 0, "UIO IRQ", evt);
-	if (err) {
+	evt_info = kzalloc(sizeof(struct uio_eventfd_info), GFP_KERNEL);
+	if (!evt_info) {
 		eventfd_ctx_put(evt);
-		return err;
+		return -ENOMEM;
 	}
 
-	gdev->msix_info.evts[vector] = evt;
+	evt_info->evt = evt;
+	evt_info->user = user;
+
+	vector_evt = &(gdev->msix_info.vector_evts[vector]);
+
+	spin_lock(&vector_evt->list_lock);
+	list_add(&evt_info->list, &vector_evt->evt_list_head);
+	spin_unlock(&vector_evt->list_lock);
+
 	return 0;
 }
 
 static int uio_msi_ioctl(struct uio_info *info, unsigned int cmd,
-		unsigned long arg)
+		unsigned long arg, unsigned long user)
 {
 	struct uio_pci_generic_dev *gdev;
 	struct uio_msix_data data;
@@ -109,7 +128,7 @@ static int uio_msi_ioctl(struct uio_info *info, unsigned int cmd,
 		if (copy_from_user(&data, (void __user *)arg, sizeof(data)))
 			return -EFAULT;
 
-		err = map_msix_eventfd(gdev, data.fd, data.vector);
+		err = map_msix_eventfd(gdev, user, data.fd, data.vector);
 		break;
 	}
 	default:
@@ -123,26 +142,54 @@ static int uio_msi_ioctl(struct uio_info *info, unsigned int cmd,
 static int pci_generic_init_msix(struct uio_pci_generic_dev *gdev)
 {
 	unsigned char *buffer;
-	int i, nvecs;
+	int i, j, irq, nvecs, ret;
+	struct uio_msix_vector_event *vector_evt;
 
 	nvecs = pci_msix_vec_count(gdev->pdev);
 	if (!nvecs)
 		return -EINVAL;
 
 	buffer = devm_kzalloc(&gdev->pdev->dev, nvecs * (sizeof(struct msix_entry) +
-			sizeof(struct eventfd_ctx *)), GFP_KERNEL);
+			sizeof(struct uio_msix_vector_event)), GFP_KERNEL);
 	if (!buffer)
 		return -ENOMEM;
 
 	gdev->msix_info.entries = (struct msix_entry *)buffer;
-	gdev->msix_info.evts = (struct eventfd_ctx **)
+	gdev->msix_info.vector_evts = (struct uio_msix_vector_event *)
 		((unsigned char *)buffer + nvecs * sizeof(struct msix_entry));
 	gdev->msix_info.nvecs = nvecs;
 
 	for (i = 0; i < nvecs; ++i)
 		gdev->msix_info.entries[i].entry = i;
 
-	return  pci_enable_msix_exact(gdev->pdev, gdev->msix_info.entries, nvecs);
+	ret = pci_enable_msix_exact(gdev->pdev, gdev->msix_info.entries, nvecs);
+	if (ret) {
+		pr_err("Failed to enable UIO MSI-X, ret = %d.\n", ret);
+		kfree(buffer);
+		return ret;
+	}
+
+	for (i = 0; i < nvecs; ++i) {
+		irq = gdev->msix_info.entries[i].vector;
+		vector_evt = &gdev->msix_info.vector_evts[i];
+		vector_evt->irq = irq;
+		INIT_LIST_HEAD(&vector_evt->evt_list_head);
+		spin_lock_init(&vector_evt->list_lock);
+
+		ret = request_irq(irq, uio_msix_handler, 0, "UIO IRQ", vector_evt);
+		if (ret) {
+
+			for (j = 0; j < i - 1; j++) {
+				free_irq(gdev->msix_info.entries[j].vector,
+					&gdev->msix_info.vector_evts[j]);
+			}
+
+			kfree(buffer);
+			pci_disable_msix(gdev->pdev);
+			return ret;
+		}
+	}
+	return 0;
 }
 #endif
 
@@ -156,6 +203,24 @@ static int release(struct uio_info *info, struct inode *inode)
 {
 	struct uio_pci_generic_dev *gdev = to_uio_pci_generic_dev(info);
 
+#ifdef CONFIG_PCI_MSI
+	int i;
+	struct uio_eventfd_info *evt_info, *next;
+	struct uio_msix_vector_event *vector_evt;
+
+	for (i = 0; i < gdev->msix_info.nvecs; ++i) {
+		vector_evt = &gdev->msix_info.vector_evts[i];
+		spin_lock(&vector_evt->list_lock);
+		list_for_each_entry_safe(evt_info, next, &vector_evt->evt_list_head, list) {
+			if (evt_info->user == user) {
+				list_del(&evt_info->list);
+				eventfd_ctx_put(evt_info->evt);
+				kfree(evt_info);
+			}
+		}
+		spin_unlock(&vector_evt->list_lock);
+	}
+#endif
 	/*
 	 * This driver is insecure when used with devices doing DMA, but some
 	 * people (mis)use it with such devices.
@@ -269,21 +334,25 @@ static int probe(struct pci_dev *pdev,
 #ifdef CONFIG_PCI_MSI
 static void remove(struct pci_dev *pdev)
 {
-	int i, irq;
-	struct eventfd_ctx *evt;
+	int i;
+	struct uio_eventfd_info *evt_info, *next;
+	struct uio_msix_vector_event *vector_evt;
 	struct uio_pci_generic_dev *gdev = pci_get_drvdata(pdev);
 
 	if (gdev->msix_info.entries != NULL) {
 		for (i = 0; i < gdev->msix_info.nvecs; i++) {
-			irq = gdev->msix_info.entries[i].vector;
-			evt = gdev->msix_info.evts[i];
-			if (evt) {
-				free_irq(irq, evt);
-				eventfd_ctx_put(evt);
-				gdev->msix_info.evts[i] = NULL;
+			vector_evt = &gdev->msix_info.vector_evts[i];
+			spin_lock(&vector_evt->list_lock);
+			list_for_each_entry_safe(evt_info, next, &vector_evt->evt_list_head, list) {
+				list_del(&evt_info->list);
+				eventfd_ctx_put(evt_info->evt);
+				kfree(evt_info);
 			}
+			spin_unlock(&vector_evt->list_lock);
+			free_irq(vector_evt->irq, vector_evt);
 		}
 		pci_disable_msix(pdev);
+		kfree(gdev->msix_info.entries);
 	}
 }
 #endif
