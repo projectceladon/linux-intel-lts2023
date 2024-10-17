@@ -292,7 +292,7 @@ struct virtio_gpu_device {
 	spinlock_t resource_export_lock;
 	/* protects map state and host_visible_mm */
 	spinlock_t host_visible_lock;
-	struct virtio_gpu_vblank vblank[];
+	struct virtio_gpu_vblank vblank[VIRTIO_GPU_MAX_SCANOUTS];
 };
 
 struct virtio_gpu_fpriv {

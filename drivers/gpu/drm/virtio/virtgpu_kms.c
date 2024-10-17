@@ -291,25 +291,6 @@ int virtio_gpu_init(struct virtio_device *vdev, struct drm_device *dev)
 	DRM_INFO("features: %ccontext_init\n",
 		 vgdev->has_context_init ? '+' : '-');
 
-	vgdev->num_vblankq = 0;
-	if(vgdev->has_vblank)
-		virtio_cread_le(vgdev->vdev, struct virtio_gpu_config,
-				num_pipe, &vgdev->num_vblankq);
-
-	for(i=0; i<vgdev->num_vblankq; i++)
-		spin_lock_init(&vgdev->vblank[i].vblank.qlock);
-
-	ret = virtio_gpu_find_vqs(vgdev);
-	if (ret) {
-		DRM_ERROR("failed to find virt queues\n");
-		goto err_vqs;
-	}
-	ret = virtio_gpu_alloc_vbufs(vgdev);
-	if (ret) {
-		DRM_ERROR("failed to alloc vbufs\n");
-		goto err_vbufs;
-	}
-
 	/* get display info */
 	virtio_cread_le(vgdev->vdev, struct virtio_gpu_config,
 			num_scanouts, &num_scanouts);
@@ -328,6 +309,29 @@ int virtio_gpu_init(struct virtio_device *vdev, struct drm_device *dev)
 	virtio_cread_le(vgdev->vdev, struct virtio_gpu_config,
 			num_capsets, &num_capsets);
 	DRM_INFO("number of cap sets: %d\n", num_capsets);
+
+	vgdev->num_vblankq = 0;
+	if(vgdev->has_vblank)
+		virtio_cread_le(vgdev->vdev, struct virtio_gpu_config,
+                               num_pipe, &vgdev->num_vblankq);
+	if (vgdev->num_vblankq > vgdev->num_scanouts) {
+		DRM_WARN("virtio gpu has wrong vblank number\n");
+		vgdev->num_vblankq = vgdev->num_scanouts;
+	}
+
+	for(i=0; i<vgdev->num_vblankq; i++)
+		spin_lock_init(&vgdev->vblank[i].vblank.qlock);
+
+	ret = virtio_gpu_find_vqs(vgdev);
+	if (ret) {
+		DRM_ERROR("failed to find virt queues\n");
+		goto err_vqs;
+	}
+	ret = virtio_gpu_alloc_vbufs(vgdev);
+	if (ret) {
+		DRM_ERROR("failed to alloc vbufs\n");
+		goto err_vbufs;
+	}
 
 	virtio_device_ready(vgdev->vdev);
 
