@@ -480,6 +480,7 @@ virtio_gpu_cmd_set_scanout_blob(struct virtio_gpu_device *vgdev,
 				uint32_t x, uint32_t y);
 void virtio_gpu_cmd_set_modifier(struct virtio_gpu_device *vgdev,
 				 uint32_t scanout_id,
+				 struct virtio_gpu_object *bo,
 				 struct drm_framebuffer *fb);
 
 void virtio_gpu_cmd_set_scaling(struct virtio_gpu_device *vgdev,

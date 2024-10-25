@@ -556,7 +556,7 @@ struct virtio_gpu_set_modifier {
 	struct virtio_gpu_ctrl_hdr hdr;
 	__le64 modifier;
 	__le32 scanout_id;
-	__le32 padding;
+	__le32 resource_id;
 };
 
 /* VIRTIO_GPU_CMD_RESOURCE_MAP_BLOB */

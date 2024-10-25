@@ -530,6 +530,8 @@ static void virtio_gpu_primary_plane_update(struct drm_plane *plane,
 			  plane->state->src_y >> 16);
 
 		if (bo->host3d_blob || bo->guest_blob) {
+			if (vgdev->has_modifier)
+				virtio_gpu_cmd_set_modifier(vgdev, output->index, bo, plane->state->fb);
 			virtio_gpu_cmd_set_scanout_blob
 						(vgdev, output->index, bo,
 						 plane->state->fb,
@@ -537,8 +539,6 @@ static void virtio_gpu_primary_plane_update(struct drm_plane *plane,
 						 plane->state->src_h >> 16,
 						 plane->state->src_x >> 16,
 						 plane->state->src_y >> 16);
-			if (vgdev->has_modifier)
-				virtio_gpu_cmd_set_modifier(vgdev, output->index, plane->state->fb);
 
 		} else {
 			virtio_gpu_cmd_set_scanout(vgdev, output->index,
