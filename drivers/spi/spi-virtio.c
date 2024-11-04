@@ -405,19 +405,6 @@ static struct virtio_device_id id_table[] = {
 	{}
 };
 
-#ifdef CONFIG_PM_SLEEP
-static int virtio_spi_freeze(struct virtio_device *vdev)
-{
-	virtio_spi_del_vqs(vdev);
-	return 0;
-}
-
-static int virtio_spi_restore(struct virtio_device *vdev)
-{
-	return virtio_spi_setup_vqs(vdev->priv);
-}
-#endif
-
 static struct virtio_driver virtio_spi_driver = {
 	.id_table		= id_table,
 	.probe			= virtio_spi_probe,
@@ -425,10 +412,6 @@ static struct virtio_driver virtio_spi_driver = {
 	.driver			= {
 		.name	= "virtio-spi",
 	},
-#ifdef CONFIG_PM_SLEEP
-	.freeze = virtio_spi_freeze,
-	.restore = virtio_spi_restore,
-#endif
 };
 module_virtio_driver(virtio_spi_driver);
 
