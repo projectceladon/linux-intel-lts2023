@@ -17,6 +17,14 @@
 #include "optee_trace.h"
 #include "optee_bench.h"
 
+#if defined(CONFIG_X86_64)
+#include <asm/io.h>
+#endif
+
+#if defined(CONFIG_OPTEE_VSOCK) || defined(CONFIG_OPTEE_IVSHMEM)
+extern unsigned long optee_shm_offset;
+#endif
+
 struct optee_call_waiter {
 	struct list_head list_node;
 	struct completion c;

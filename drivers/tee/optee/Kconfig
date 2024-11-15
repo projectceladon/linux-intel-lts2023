@@ -39,3 +39,27 @@ config OPTEE_BENCHMARK
         help
           This enables benchmarking feature in the OP-TEE Trusted
           Execution Environment (TEE) driver. Not supported on x86_64.
+
+config OPTEE_HV_IKGT
+	bool "OP-TEE on top of IKGT hypervisor"
+	depends on OPTEE
+	depends on X86_64
+	help
+	  This enables IKGT based SMC in the OP-TEE Trusted
+	  Execution Environment (TEE) driver.
+
+config OPTEE_VSOCK
+	bool "OP-TEE SMC based on VSOCK"
+	depends on OPTEE
+	depends on X86_64
+	help
+	  This enables VSOCK based SMC in the OP-TEE Trusted
+	  Execution Environment (TEE) driver.
+
+config OPTEE_IVSHMEM
+	bool "OP-TEE SMC based on IVSHMEM"
+	depends on OPTEE
+	depends on X86_64
+	help
+	  This enables IVSHMEM based SMC in the OP-TEE Trusted
+	  Execution Environment (TEE) driver.
