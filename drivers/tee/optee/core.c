@@ -587,6 +587,28 @@ static struct tee_shm_pool *optee_config_dyn_shm(void)
 	return rc;
 }
 
+static unsigned long optee_msg_get_opened_session(optee_invoke_fn *invoke_fn)
+{
+	union {
+		struct arm_smccc_res smccc;
+		struct optee_smc_call_get_opened_session_result result;
+	} res = {
+		.result = {
+			.session_id = 0
+		}
+	};
+
+	invoke_fn(OPTEE_SMC_GET_OPENED_SESSION, 0, 0, 0, 0, 0, 0, 0,
+		  &res.smccc);
+
+	if (res.result.status != OPTEE_SMC_RETURN_OK)
+		return 0;
+
+	pr_info("get opened session %lu", res.result.session_id);
+
+	return res.result.session_id;
+}
+
 static struct tee_shm_pool *
 optee_config_shm_memremap(optee_invoke_fn *invoke_fn, void **memremaped_shm)
 {
@@ -952,6 +974,14 @@ static int optee_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static int optee_ctx_match(struct tee_ioctl_version_data *ver, const void *data)
+{
+	if (ver->impl_id == TEE_IMPL_ID_OPTEE)
+		return 1;
+	else
+		return 0;
+}
+
 static int optee_probe(struct platform_device *pdev)
 {
 	optee_invoke_fn *invoke_fn;
@@ -963,6 +993,8 @@ static int optee_probe(struct platform_device *pdev)
 	int rc;
 
 #if defined(CONFIG_X86_64)
+	unsigned long session_id = 0;
+	struct tee_context *ctx = NULL;
 #if defined(CONFIG_OPTEE_VSOCK)
 	union {
 		struct sockaddr sa;
@@ -1088,6 +1120,22 @@ static int optee_probe(struct platform_device *pdev)
 		pr_info("dynamic shared memory is enabled\n");
 
 	platform_set_drvdata(pdev, optee);
+
+#if defined(CONFIG_X86_64)
+	ctx = tee_client_open_context(NULL, optee_ctx_match, NULL, NULL);
+	if (IS_ERR(ctx)) {
+		pr_err("Failed to open context");
+		optee_remove(pdev);
+		return -ENODEV;
+	}
+
+	while ((session_id = optee_msg_get_opened_session(invoke_fn))) {
+		pr_info("need to close session %lu", session_id);
+		optee_close_opened_session(ctx, session_id);
+	}
+
+	tee_client_close_context(ctx);
+#endif
 
 	rc = optee_enumerate_devices(PTA_CMD_GET_DEVICES);
 	if (rc) {
