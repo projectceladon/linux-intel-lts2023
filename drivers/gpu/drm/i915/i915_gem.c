@@ -2180,6 +2180,7 @@ int i915_gem_open(struct drm_i915_private *i915, struct drm_file *file)
 	file_priv->file = file;
 	file_priv->client = client;
 
+	file_priv->last_end_time = 0;
 	file_priv->bsd_engine = -1;
 	file_priv->hang_timestamp = jiffies;
 #if IS_ENABLED(CONFIG_DRM_I915_MEMTRACK)

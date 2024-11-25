@@ -112,6 +112,7 @@ struct intel_context {
 	u32 ring_size;
 	struct intel_ring *ring;
 	struct intel_timeline *timeline;
+	u64 last_end_time;
 
 	unsigned long flags;
 #define CONTEXT_BARRIER_BIT		0

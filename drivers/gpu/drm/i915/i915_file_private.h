@@ -37,6 +37,7 @@ struct drm_i915_file_private {
 	 * See i915_gem_proto_context.
 	 */
 	struct mutex proto_context_lock;
+	u64 last_end_time;
 
 	/** @proto_context_xa: xarray of struct i915_gem_proto_context
 	 *
