@@ -15,6 +15,7 @@
 #include <linux/udmabuf.h>
 #include <linux/vmalloc.h>
 #include <linux/iosys-map.h>
+#include <linux/ivshm.h>
 
 static int list_limit = 1024;
 module_param(list_limit, int, 0644);
@@ -258,16 +259,20 @@ static long udmabuf_create(struct miscdevice *device,
 		memfd = fget(list[i].memfd);
 		if (!memfd)
 			goto err;
-		mapping = memfd->f_mapping;
-		if (!shmem_mapping(mapping) && !is_file_hugepages(memfd))
+		mapping = file_inode(memfd)->i_mapping;
+		if (shmem_mapping(mapping) || is_file_hugepages(memfd)) {
+			seals = memfd_fcntl(memfd, F_GET_SEALS, 0);
+			if (seals == -EINVAL)
+				goto err;
+			ret = -EINVAL;
+			if ((seals & SEALS_WANTED) != SEALS_WANTED ||
+			    (seals & SEALS_DENIED) != 0)
+				goto err;
+		} else if (is_ivshm_region(memfd)) {
+			/* no op */
+		} else {
 			goto err;
-		seals = memfd_fcntl(memfd, F_GET_SEALS, 0);
-		if (seals == -EINVAL)
-			goto err;
-		ret = -EINVAL;
-		if ((seals & SEALS_WANTED) != SEALS_WANTED ||
-		    (seals & SEALS_DENIED) != 0)
-			goto err;
+		}
 		pgoff = list[i].offset >> PAGE_SHIFT;
 		pgcnt = list[i].size   >> PAGE_SHIFT;
 		if (is_file_hugepages(memfd)) {
@@ -304,6 +309,12 @@ static long udmabuf_create(struct miscdevice *device,
 					hpage = NULL;
 					chunkoff = 0;
 					mapidx++;
+				}
+			} else if (is_ivshm_region(memfd)) {
+				page = ivshm_region_offset_to_page(memfd, pgoff + pgidx);
+				if (IS_ERR(page)) {
+					ret = PTR_ERR(page);
+					goto err;
 				}
 			} else {
 				mapidx = pgoff + pgidx;
