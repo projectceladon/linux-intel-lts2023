@@ -51,6 +51,7 @@
 #include <drm/drm_vma_manager.h>
 
 #include "drm_internal.h"
+#include "linux/virtio_shm.h"
 
 /** @file drm_gem.c
  *
@@ -539,6 +540,7 @@ struct page **drm_gem_get_pages(struct drm_gem_object *obj)
 	struct address_space *mapping;
 	struct page **pages;
 	struct folio *folio;
+	struct page *p;
 	struct folio_batch fbatch;
 	long i, j, npages;
 
@@ -564,15 +566,22 @@ struct page **drm_gem_get_pages(struct drm_gem_object *obj)
 
 	i = 0;
 	while (i < npages) {
-		long nr;
-		folio = shmem_read_folio_gfp(mapping, i,
-				mapping_gfp_mask(mapping));
-		if (IS_ERR(folio))
-			goto fail;
-		nr = min(npages - i, folio_nr_pages(folio));
-		for (j = 0; j < nr; j++, i++)
-			pages[i] = folio_file_page(folio, i);
-
+		if (strcmp(obj->dev->dev->driver->name, "virtio-ivshmem") == 0 ||
+		    strcmp(obj->dev->dev->driver->name, "virtio-guest-shm") == 0) {
+			p = virtio_shmem_allocate_page(obj->dev->dev);
+			if (IS_ERR(p))
+				goto fail;
+			pages[i] = p;
+		} else {
+			long nr;
+			folio = shmem_read_folio_gfp(mapping, i,
+					mapping_gfp_mask(mapping));
+			if (IS_ERR(folio))
+				goto fail;
+			nr = min(npages - i, folio_nr_pages(folio));
+			for (j = 0; j < nr; j++, i++)
+				pages[i] = folio_file_page(folio, i);
+		}
 		/* Make sure shmem keeps __GFP_DMA32 allocated pages in the
 		 * correct region during swapin. Note that this requires
 		 * __GFP_DMA32 to be set in mapping_gfp_mask(inode->i_mapping)
@@ -586,16 +595,21 @@ struct page **drm_gem_get_pages(struct drm_gem_object *obj)
 
 fail:
 	mapping_clear_unevictable(mapping);
-	folio_batch_init(&fbatch);
-	j = 0;
-	while (j < i) {
-		struct folio *f = page_folio(pages[j]);
-		if (!folio_batch_add(&fbatch, f))
+	if (strcmp(obj->dev->dev->driver->name, "virtio-ivshmem") == 0 ||
+		strcmp(obj->dev->dev->driver->name, "virtio-guest-shm") == 0) {
+		virtio_shmem_free_page(obj->dev->dev, pages[i]);
+	} else {
+		folio_batch_init(&fbatch);
+		j = 0;
+		while (j < i) {
+			struct folio *f = page_folio(pages[j]);
+			if (!folio_batch_add(&fbatch, f))
+				drm_gem_check_release_batch(&fbatch);
+			j += folio_nr_pages(f);
+		}
+		if (fbatch.nr)
 			drm_gem_check_release_batch(&fbatch);
-		j += folio_nr_pages(f);
 	}
-	if (fbatch.nr)
-		drm_gem_check_release_batch(&fbatch);
 
 	kvfree(pages);
 	return ERR_CAST(folio);
@@ -627,27 +641,36 @@ void drm_gem_put_pages(struct drm_gem_object *obj, struct page **pages,
 
 	npages = obj->size >> PAGE_SHIFT;
 
-	folio_batch_init(&fbatch);
-	for (i = 0; i < npages; i++) {
-		struct folio *folio;
+	if (strcmp(obj->dev->dev->driver->name, "virtio-ivshmem") == 0 ||
+		strcmp(obj->dev->dev->driver->name, "virtio-guest-shm") == 0) {
+		for (i = 0; i < npages; i++) {
+			if (!pages[i])
+				continue;
+			virtio_shmem_free_page(obj->dev->dev, pages[i]);
+		}
+	} else {
+		folio_batch_init(&fbatch);
+		for (i = 0; i < npages; i++) {
+			struct folio *folio;
 
-		if (!pages[i])
-			continue;
-		folio = page_folio(pages[i]);
+			if (!pages[i])
+				continue;
+			folio = page_folio(pages[i]);
 
-		if (dirty)
-			folio_mark_dirty(folio);
+			if (dirty)
+				folio_mark_dirty(folio);
 
-		if (accessed)
-			folio_mark_accessed(folio);
+			if (accessed)
+				folio_mark_accessed(folio);
 
-		/* Undo the reference we took when populating the table */
-		if (!folio_batch_add(&fbatch, folio))
+			/* Undo the reference we took when populating the table */
+			if (!folio_batch_add(&fbatch, folio))
+				drm_gem_check_release_batch(&fbatch);
+			i += folio_nr_pages(folio) - 1;
+		}
+		if (folio_batch_count(&fbatch))
 			drm_gem_check_release_batch(&fbatch);
-		i += folio_nr_pages(folio) - 1;
 	}
-	if (folio_batch_count(&fbatch))
-		drm_gem_check_release_batch(&fbatch);
 
 	kvfree(pages);
 }
