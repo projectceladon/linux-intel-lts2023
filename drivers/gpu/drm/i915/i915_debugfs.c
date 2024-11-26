@@ -839,6 +839,34 @@ static const struct file_operations i915_forcewake_fops = {
 	.release = i915_forcewake_release,
 };
 
+#ifdef CONFIG_QNX_GUEST
+static int
+i915_force_provisioning_vfs_set(void *data, u64 val)
+{
+	struct drm_i915_private *i915 = data;
+	/* Enable vf by setting 'i915_force_provisioning_vfs' to 1 */
+	if (val > 1)
+		return -EINVAL;
+
+	if (val == 1)
+		(void)i915_sriov_pf_enable_vfs(i915, val);
+
+	return 0;
+}
+
+static int
+i915_force_provisioning_vfs_get(void *data, u64 *val)
+{
+	*val = 0;
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(i915_force_provisioning_vfs_fops,
+			i915_force_provisioning_vfs_get,
+			i915_force_provisioning_vfs_set,
+			"%llu\n");
+#endif
+
 static const struct drm_info_list i915_debugfs_list[] = {
 	{"i915_capabilities", i915_capabilities, 0},
 	{"i915_gem_objects", i915_gem_object_info, 0},
@@ -869,6 +897,9 @@ static const struct i915_debugfs_files {
 #if IS_ENABLED(CONFIG_DRM_I915_CAPTURE_ERROR)
 	{"i915_error_state", &i915_error_state_fops},
 	{"i915_gpu_info", &i915_gpu_info_fops},
+#endif
+#ifdef CONFIG_QNX_GUEST
+	{"i915_force_provisioning_vfs", &i915_force_provisioning_vfs_fops},
 #endif
 }, i915_vf_debugfs_files[] = {
 	{"i915_wedged", &i915_wedged_fops},

@@ -248,6 +248,11 @@ i915_param_named(max_vfs, uint, 0400,
 	"Limit number of virtual functions to allocate. "
 	"(0 = no VFs [default]; N = allow up to N VFs)");
 
+#ifdef CONFIG_QNX_GUEST
+i915_param_named(initial_vfs, uint, 0400,
+	"Number of virtual functions to initialize on startup.");
+#endif
+
 i915_param_named(enable_mtl_rcs_ccs_wa, bool, 0400,
 	"Enable the RCS/CCS switchout hold workaround for MTL (only some workloads are affected by issue and w/a has a performance penalty) (default:false)");
 

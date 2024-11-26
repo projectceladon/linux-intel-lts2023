@@ -20,6 +20,7 @@
 #include "gt/iov/intel_iov_reg.h"
 #include "gt/iov/intel_iov_state.h"
 #include "gt/iov/intel_iov_utils.h"
+#include "asm/hypervisor.h"
 
 #include "pxp/intel_pxp.h"
 
@@ -40,6 +41,28 @@ void assert_media_ip_ver_ready(const struct drm_i915_private *i915)
 			 (void *)_RET_IP_);
 }
 #endif
+
+#ifdef CONFIG_QNX_GUEST
+#define PCI_SRIOV_HARDCODE_TOTAL_VFS 7
+#endif
+
+static int pci_sriov_get_totalvfs_wrapper(struct pci_dev *pdev)
+{
+#ifdef CONFIG_QNX_GUEST
+	if (hypervisor_is_type(X86_HYPER_QNX))
+		return PCI_SRIOV_HARDCODE_TOTAL_VFS;
+#endif
+	return pci_sriov_get_totalvfs(pdev);
+}
+
+static int pci_num_vf_wrapper(struct drm_i915_private *i915, struct pci_dev *pdev)
+{
+#ifdef CONFIG_QNX_GUEST
+	if (hypervisor_is_type(X86_HYPER_QNX))
+		return i915->params.initial_vfs;
+#endif
+	return pci_num_vf(pdev);
+}
 
 /* safe for use before register access via uncore is completed */
 static u32 pci_peek_mmio_read32(struct pci_dev *pdev, i915_reg_t reg)
@@ -120,19 +143,27 @@ static bool pf_verify_readiness(struct drm_i915_private *i915)
 {
 	struct device *dev = i915->drm.dev;
 	struct pci_dev *pdev = to_pci_dev(dev);
-	int totalvfs = pci_sriov_get_totalvfs(pdev);
+
+	int totalvfs = pci_sriov_get_totalvfs_wrapper(pdev);
+
 	int newlimit = min_t(u16, wanted_max_vfs(i915), totalvfs);
 
-	GEM_BUG_ON(!dev_is_pf(dev));
+	if (!hypervisor_is_type(X86_HYPER_QNX))
+		GEM_BUG_ON(!dev_is_pf(dev));
 	GEM_WARN_ON(totalvfs > U16_MAX);
 
 	if (!newlimit)
 		return pf_continue_as_native(i915, "all VFs disabled");
 
-	if (!pf_has_valid_vf_bars(i915))
-		return pf_continue_as_native(i915, "VFs BAR not ready");
+	if (hypervisor_is_type(X86_HYPER_QNX)) {
+		if (!pf_has_valid_vf_bars(i915))
+			drm_dbg(&i915->drm, "PF: %s\n", "VFs BAR not ready");
+	} else {
+		if (!pf_has_valid_vf_bars(i915))
+			return pf_continue_as_native(i915, "VFs BAR not ready");
 
-	pf_reduce_totalvfs(i915, newlimit);
+		pf_reduce_totalvfs(i915, newlimit);
+	}
 
 	i915->sriov.pf.device_vfs = totalvfs;
 	i915->sriov.pf.driver_vfs = newlimit;
@@ -170,8 +201,13 @@ enum i915_iov_mode i915_sriov_probe(struct drm_i915_private *i915)
 		return I915_IOV_MODE_SRIOV_VF;
 
 #ifdef CONFIG_PCI_IOV
-	if (dev_is_pf(dev) && pf_verify_readiness(i915))
-		return I915_IOV_MODE_SRIOV_PF;
+	if (hypervisor_is_type(X86_HYPER_QNX)) {
+		if (pf_verify_readiness(i915))
+			return I915_IOV_MODE_SRIOV_PF;
+	} else {
+		if (dev_is_pf(dev) && pf_verify_readiness(i915))
+			return I915_IOV_MODE_SRIOV_PF;
+	}
 #endif
 
 	return I915_IOV_MODE_NONE;
@@ -423,8 +459,10 @@ void i915_sriov_print_info(struct drm_i915_private *i915, struct drm_printer *p)
 
 		drm_printf(p, "device vfs: %u\n", i915_sriov_pf_get_device_totalvfs(i915));
 		drm_printf(p, "driver vfs: %u\n", i915_sriov_pf_get_totalvfs(i915));
-		drm_printf(p, "supported vfs: %u\n", pci_sriov_get_totalvfs(pdev));
-		drm_printf(p, "enabled vfs: %u\n", pci_num_vf(pdev));
+		drm_printf(p, "supported vfs: %u\n", pci_sriov_get_totalvfs_wrapper(pdev));
+		drm_printf(p, "enabled vfs: %u\n", pci_num_vf_wrapper(i915, pdev));
+		/* XXX legacy igt */
+		drm_printf(p, "total_vfs: %d\n", pci_sriov_get_totalvfs_wrapper(pdev));
 	}
 }
 
@@ -500,7 +538,7 @@ int i915_sriov_pf_enable_vfs(struct drm_i915_private *i915, int num_vfs)
 {
 	bool auto_provisioning = i915_sriov_pf_is_auto_provisioning_enabled(i915);
 	struct device *dev = i915->drm.dev;
-	struct pci_dev *pdev = to_pci_dev(dev);
+	struct pci_dev *pdev;
 	struct intel_gt *gt;
 	unsigned int id;
 	int err;
@@ -549,11 +587,13 @@ int i915_sriov_pf_enable_vfs(struct drm_i915_private *i915, int num_vfs)
 			goto fail_pm;
 	}
 
-	err = pci_enable_sriov(pdev, num_vfs);
-	if (err < 0)
-		goto fail_guc;
-
-	i915_sriov_sysfs_update_links(i915, true);
+	if (!hypervisor_is_type(X86_HYPER_QNX)) {
+		pdev = to_pci_dev(dev);
+		err = pci_enable_sriov(pdev, num_vfs);
+		if (err < 0)
+			goto fail_guc;
+		i915_sriov_sysfs_update_links(i915, true);
+	}
 
 	dev_info(dev, "Enabled %u VFs\n", num_vfs);
 	return num_vfs;
@@ -616,7 +656,7 @@ int i915_sriov_pf_disable_vfs(struct drm_i915_private *i915)
 {
 	struct device *dev = i915->drm.dev;
 	struct pci_dev *pdev = to_pci_dev(dev);
-	u16 num_vfs = pci_num_vf(pdev);
+	u16 num_vfs = pci_num_vf_wrapper(i915, pdev);
 	u16 vfs_assigned = pci_vfs_assigned(pdev);
 	unsigned int in_flr = 0;
 	struct intel_gt *gt;
@@ -634,9 +674,10 @@ int i915_sriov_pf_disable_vfs(struct drm_i915_private *i915)
 	if (!num_vfs)
 		return 0;
 
-	i915_sriov_sysfs_update_links(i915, false);
-
-	pci_disable_sriov(pdev);
+	if (!hypervisor_is_type(X86_HYPER_QNX)) {
+		i915_sriov_sysfs_update_links(i915, false);
+		pci_disable_sriov(pdev);
+	}
 
 	for_each_gt(gt, i915, id)
 		pf_start_vfs_flr(&gt->iov, num_vfs);
