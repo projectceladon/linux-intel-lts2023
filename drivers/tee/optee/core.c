@@ -12,6 +12,8 @@
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #if defined(CONFIG_OPTEE_IVSHMEM)
+#include <asm/hypervisor.h>
+#include <linux/guest_shm.h>
 #include <linux/pci.h>
 #include <linux/pci_regs.h>
 #include <linux/pci_ids.h>
@@ -68,6 +70,9 @@ static DEFINE_SEMAPHORE(optee_smc_lock);
 
 #define PCI_DEVICE_ID_INTEL0	0x1
 
+/* QNX tee shm size in pages*/
+#define QNX_TEE_SHM_SIZE		0x500
+
 struct ivshmem_private {
 	struct pci_dev *dev;
 
@@ -88,6 +93,9 @@ struct ivshmem_private {
 	char                (*msix_names)[256];
 	struct msix_entry   *msix_entries;
 	int                 nvectors;
+
+	struct guest_shm_factory __iomem *fact;
+	struct guest_shm_control *ctrl;
 };
 
 static struct ivshmem_private g_ivshmem_dev;
@@ -100,6 +108,12 @@ static struct pci_device_id ivshmem_id_table[] = {
     { 0 },
 };
 MODULE_DEVICE_TABLE(pci, ivshmem_id_table);
+
+static struct pci_device_id qnx_ivshmem_id_table[] = {
+    { PCI_DEVICE(PCI_VID_BlackBerry_QNX, PCI_DID_QNX_GUEST_SHM) },
+    { 0 },
+};
+MODULE_DEVICE_TABLE(pci, qnx_ivshmem_id_table);
 
 struct optee_smc_args {
 	u64 a0;
@@ -124,10 +138,17 @@ struct optee_smc_ring {
 	u16 ring[OPTEE_SHM_QUEUE_SIZE];
 } __packed;
 
+typedef enum {
+   EVENT_KERNEL = 1,
+   EVENT_ROT,
+   EVENT_ROLLBACK,
+} event_src;
+
 static struct optee_smc_args *g_smc_args = NULL;
 static struct optee_smc_ring *g_smc_avail_ring = NULL;
 static struct optee_smc_ring *g_smc_used_ring = NULL;
 static struct optee_vm_ids *g_smc_vm_ids = NULL;
+static uint32_t *g_smc_evt_src = NULL;
 
 unsigned long optee_shm_offset = 0;
 
@@ -657,7 +678,11 @@ optee_config_shm_memremap(optee_invoke_fn *invoke_fn, void **memremaped_shm)
 	paddr = virt_to_phys(va);
 	optee_shm_offset = paddr - begin;
 #elif defined(CONFIG_OPTEE_IVSHMEM)
-	paddr = g_ivshmem_dev.bar2_addr + OPTEE_SHM_SMC_SIZE;
+	if (hypervisor_is_type(X86_HYPER_QNX))
+		paddr = roundup(g_ivshmem_dev.fact->shmem +
+						0x1000 + OPTEE_SHM_SMC_SIZE, 0x1000);
+	else
+		paddr = g_ivshmem_dev.bar2_addr + OPTEE_SHM_SMC_SIZE;
 	optee_shm_offset = paddr - begin;
 	pr_info("shared memory from tee 0x%llx/0x%lx/0x%llx/0x%lx\n",
 		begin, size, paddr, optee_shm_offset);
@@ -884,7 +909,11 @@ static void optee_smccc_smc(unsigned long a0, unsigned long a1,
 	g_smc_used_ring->tail = (g_smc_used_ring->tail + 1) % OPTEE_SHM_QUEUE_SIZE;
 	spin_unlock(&smc_ring_lock);
 
-	writel(g_smc_vm_ids->tee_id << 16, g_ivshmem_dev.regs_addr + DOORBELL_OFF);
+	if (hypervisor_is_type(X86_HYPER_QNX)) {
+		*g_smc_evt_src = EVENT_KERNEL;
+		g_ivshmem_dev.ctrl->notify = 1 << g_smc_vm_ids->tee_id;
+	} else
+		writel(g_smc_vm_ids->tee_id << 16, g_ivshmem_dev.regs_addr + DOORBELL_OFF);
 
 	wait_event_interruptible(optee_smc_queue, (g_smc_args[index].a8 == OPTEE_HANDLE_DONE));
 
@@ -1215,6 +1244,10 @@ static irqreturn_t ivshmem_interrupt(int irq, void *dev_id)
 		return IRQ_NONE;
 	}
 
+	if (hypervisor_is_type(X86_HYPER_QNX) && !(ivshmem_dev->ctrl->status
+		  & (1 << g_smc_vm_ids->tee_id)))
+		return IRQ_NONE;
+
 	wake_up_interruptible(&optee_smc_queue);
 
 	return IRQ_HANDLED;
@@ -1443,11 +1476,152 @@ static void ivshmem_remove(struct pci_dev *pdev)
 	pci_disable_device(pdev);
 }
 
+static int qnx_ivshmem_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+{
+	int ret;
+	int i;
+
+	if (PCI_SLOT(pdev->devfn) != 0x06) {
+		pr_info("not optee ivshmem device: %s\n", pci_name(pdev));
+		return -EINVAL;
+    }
+	pr_info("probing for qnx ivshmem device: %s\n", pci_name(pdev));
+
+	ret = pcim_enable_device(pdev);
+	if (ret < 0) {
+		pr_err("unable to enable ivshmem device: %d\n", ret);
+		goto out;
+	}
+
+	ret = pcim_iomap_regions(pdev, BIT(0), PCI_DRV_NAME);
+	if (ret < 0) {
+		pr_err("unable to reserve resources for ivshmem: %d\n", ret);
+		goto disable_device;
+	}
+
+	pci_set_master(pdev);
+
+	g_ivshmem_dev.fact = pcim_iomap_table(pdev)[0];
+
+	if (g_ivshmem_dev.fact->signature != GUEST_SHM_SIGNATURE) {
+		pr_err("Signature incorrect. %llx != %llx",
+		  (unsigned long long)GUEST_SHM_SIGNATURE, (unsigned long long) g_ivshmem_dev.fact->signature);
+		ret = -EINVAL;
+		goto disable_device;
+	}
+
+	strcpy(g_ivshmem_dev.fact->name, "tee_shmem");
+	// Allocate 0x500 * 0x1000 shared memory
+	guest_shm_create(g_ivshmem_dev.fact, QNX_TEE_SHM_SIZE);
+
+	if (g_ivshmem_dev.fact->status != GSS_OK) {
+		pr_err("creating failed: %d", g_ivshmem_dev.fact->status);
+		ret = -g_ivshmem_dev.fact->status;
+		goto disable_device;
+	}
+
+	if(strcmp(g_ivshmem_dev.fact->name, "tee_shmem")) {
+		pr_err("optee: not a qnx ivshmem vdev for optee\n");
+		ret = -EINVAL;
+		goto disable_device;
+	}
+	pr_info("virtio1 creation size %x, irq: %d\n",
+			g_ivshmem_dev.fact->size, g_ivshmem_dev.fact->vector);
+
+	g_ivshmem_dev.ctrl = memremap(g_ivshmem_dev.fact->shmem, 0x1000, MEMREMAP_WT);
+	if (!g_ivshmem_dev.ctrl) {
+		pr_err("optee: vdev shmem ctrl ioremap failed\n");
+		ret = -EINVAL;
+		goto disable_device;
+	}
+	pr_info("optee: shared memory index %u status: 0x%x\n",
+			g_ivshmem_dev.ctrl->idx, g_ivshmem_dev.ctrl->status);
+
+	g_ivshmem_dev.base_addr = (u8 *)memremap(g_ivshmem_dev.fact->shmem + 0x1000,
+		OPTEE_SHM_SMC_SIZE, MEMREMAP_WT);
+	if (!g_ivshmem_dev.base_addr) {
+		pr_err("base memory ioremap failed\n");
+		goto unmap_ctrl;
+	}
+	pr_info("ivshmem base map: 0x%llx\n", (u64)g_ivshmem_dev.base_addr);
+
+	g_smc_evt_src = (uint32_t *)g_ivshmem_dev.base_addr;
+	g_smc_vm_ids = (struct optee_vm_ids *)(g_ivshmem_dev.base_addr +
+		sizeof(uint32_t));
+	g_smc_avail_ring = (struct optee_smc_ring *)(g_ivshmem_dev.base_addr +
+		sizeof(uint32_t) + sizeof(struct optee_vm_ids));
+	g_smc_used_ring = (struct optee_smc_ring *)(g_ivshmem_dev.base_addr +
+		sizeof(uint32_t) + sizeof(struct optee_vm_ids) +
+		sizeof(struct optee_smc_ring));
+	g_smc_args = (struct optee_smc_args *)(g_ivshmem_dev.base_addr +
+		sizeof(uint32_t) + sizeof(struct optee_vm_ids) +
+		sizeof(struct optee_smc_ring) + sizeof(struct optee_smc_ring));
+	g_smc_avail_ring->head = 0;
+	g_smc_avail_ring->tail = 0;
+	for (i = 0; i < OPTEE_SHM_QUEUE_SIZE; i++) {
+		g_smc_avail_ring->ring[i] = i;
+	}
+	g_smc_used_ring->head = 0;
+	g_smc_used_ring->tail = 0;
+	for (i = 0; i < OPTEE_SHM_QUEUE_SIZE; i++) {
+		g_smc_used_ring->ring[i] = OPTEE_SHM_QUEUE_SIZE;
+	}
+	memset(g_smc_args, 0, sizeof(struct optee_smc_args) * OPTEE_SHM_QUEUE_SIZE);
+
+	g_ivshmem_dev.dev = pdev;
+
+	g_smc_vm_ids->ree_id = g_ivshmem_dev.ctrl->idx;
+	pr_info("ivshmem device ree id=%d tee id=%d\n", g_smc_vm_ids->ree_id, g_smc_vm_ids->tee_id);
+
+	ret = request_irq(pci_irq_vector(pdev, 0), ivshmem_interrupt, 0, "qvm-shmem-irq", &g_ivshmem_dev);
+	if (ret) {
+		pr_info("ivshmem device request_irq failed\n");
+		goto destroy_device;
+	}
+
+	pr_info("ivshmem device probed: %s\n", pci_name(pdev));
+	return 0;
+
+destroy_device:
+	g_ivshmem_dev.dev = NULL;
+	memunmap(g_ivshmem_dev.base_addr);
+
+unmap_ctrl:
+	memunmap(g_ivshmem_dev.ctrl);
+
+disable_device:
+	pci_disable_device(pdev);
+
+out:
+    return ret;
+}
+
+static void qnx_ivshmem_remove(struct pci_dev *pdev)
+{
+	pr_info("removing for ivshmem device: %s\n", pci_name(pdev));
+
+	free_irq(pdev->irq, &g_ivshmem_dev);
+
+	g_ivshmem_dev.dev = NULL;
+
+	memunmap(g_ivshmem_dev.base_addr);
+	memunmap(g_ivshmem_dev.ctrl);
+
+	pci_disable_device(pdev);
+}
+
 static struct pci_driver ivshmem_driver = {
 	.name       = PCI_DRV_NAME,
 	.id_table   = ivshmem_id_table,
 	.probe      = ivshmem_probe,
 	.remove     = ivshmem_remove,
+};
+
+static struct pci_driver qnx_ivshmem_driver = {
+	.name       = PCI_DRV_NAME,
+	.id_table   = qnx_ivshmem_id_table,
+	.probe      = qnx_ivshmem_probe,
+	.remove     = qnx_ivshmem_remove,
 };
 #endif
 
@@ -1456,7 +1630,11 @@ static int __init optee_drv_init(void)
 	int ret = 0;
 
 #if defined(CONFIG_OPTEE_IVSHMEM)
-	ret = pci_register_driver(&ivshmem_driver);
+	if (hypervisor_is_type(X86_HYPER_QNX))
+		ret = pci_register_driver(&qnx_ivshmem_driver);
+	else
+		ret = pci_register_driver(&ivshmem_driver);
+
 	if (ret) {
 		pr_err("pci_register_driver() failed, ret %d\n", ret);
 		return ret;
