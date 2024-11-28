@@ -2869,7 +2869,7 @@ static int early_mod_check(struct load_info *info, int flags)
  * zero, and we rely on this for optional sections.
  */
 static int load_module(struct load_info *info, const char __user *uargs,
-		       int flags)
+		       const char *kargs, int flags, bool no_uargs)
 {
 	struct module *mod;
 	bool module_allocated = false;
@@ -2970,10 +2970,21 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	flush_module_icache(mod);
 
 	/* Now copy in args */
-	mod->args = strndup_user(uargs, ~0UL >> 1);
-	if (IS_ERR(mod->args)) {
-		err = PTR_ERR(mod->args);
-		goto free_arch_cleanup;
+	if (!no_uargs) {
+		mod->args = strndup_user(uargs, ~0UL >> 1);
+		if (IS_ERR(mod->args)) {
+			pr_debug("%s mod->args error\n", __func__);
+			err = PTR_ERR(mod->args);
+			goto free_arch_cleanup;
+		}
+		pr_debug("%s mod->args: %llx \n", __func__, (u64)mod->args);
+	} else {
+		if (kargs)
+			mod->args = kmemdup(kargs, strlen(kargs) + 1, GFP_KERNEL);
+		else {
+			char *arg = "";
+			mod->args = kmemdup(arg, strlen(arg) + 1, GFP_KERNEL);
+		}
 	}
 
 	init_build_id(mod, info);
@@ -3098,7 +3109,15 @@ SYSCALL_DEFINE3(init_module, void __user *, umod,
 		return err;
 	}
 
-	return load_module(&info, uargs, 0);
+	return load_module(&info, uargs, NULL, 0, false);
+}
+
+int gfx_load_module(void *buf, int len, const char *kargs)
+{
+	struct load_info info = { };
+	info.hdr = buf;
+	info.len = len;
+	return load_module(&info, NULL, kargs, 0, true);
 }
 
 struct idempotent {
@@ -3210,7 +3229,7 @@ static int init_module_from_file(struct file *f, const char __user * uargs, int 
 		info.len = len;
 	}
 
-	return load_module(&info, uargs, flags);
+	return load_module(&info, uargs, NULL, flags, false);
 }
 
 static int idempotent_init_module(struct file *f, const char __user * uargs, int flags)
