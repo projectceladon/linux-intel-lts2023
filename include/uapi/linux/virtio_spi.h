@@ -60,4 +60,24 @@ struct virtio_spi_transfer_result {
 #define VIRTIO_SPI_TRANS_OK	0
 #define VIRTIO_SPI_TRANS_ERR	1
 
+/**
+ * struct virtio_spi_event_head - the virtio SPI event unmask request header
+ * @slave_id: the controlled slave chip select
+ */
+struct virtio_spi_event_head {
+	__u8 slave_id;
+};
+
+/**
+ * struct virtio_spi_event_result - the virtio SPI event reuslt
+ * @result: the irq event result from the backend
+ */
+struct virtio_spi_event_result {
+	__u8 result;
+};
+
+/* The irq event status for the device */
+#define VIRTIO_SPI_IRQ_VALID	0
+#define VIRTIO_SPI_IRQ_INVALID	1
+
 #endif /* _UAPI_LINUX_VIRTIO_SPI_H */
