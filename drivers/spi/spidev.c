@@ -26,6 +26,10 @@
 
 #include <linux/uaccess.h>
 
+#include <linux/irq.h>
+#include <linux/interrupt.h>
+#include <linux/poll.h>
+#include <linux/irqdomain.h>
 
 /*
  * This supports access to SPI devices using normal userspace I/O calls.
@@ -79,7 +83,9 @@ struct spidev_data {
 	u8			*tx_buffer;
 	u8			*rx_buffer;
 	u32			speed_hz;
-};
+	int			irq;
+	bool			notified;
+	struct wait_queue_head	waitq;};
 
 static LIST_HEAD(device_list);
 static DEFINE_MUTEX(device_list_lock);
@@ -89,6 +95,39 @@ module_param(bufsiz, uint, S_IRUGO);
 MODULE_PARM_DESC(bufsiz, "data bytes in biggest supported SPI message");
 
 /*-------------------------------------------------------------------------*/
+
+static irqreturn_t handshake_irq(int __attribute__((unused)) irq, void *id)
+{
+	struct spidev_data *spidev = id;
+
+	wake_up_interruptible_all(&spidev->waitq);
+
+	return IRQ_HANDLED;
+}
+
+static int spidev_irq_get(struct spi_device *spi)
+{
+	struct irq_fwspec fwspec;
+	struct irq_domain *domain;
+	struct spi_master *master = spi->master;
+	int irq = -EINVAL;
+
+	fwspec.fwnode = dev_fwnode(master->dev.parent);
+	fwspec.param[0] = spi->chip_select;
+	fwspec.param[1] = IRQ_TYPE_EDGE_RISING;
+	fwspec.param_count = 2;
+
+	domain = irq_find_matching_fwnode(fwspec.fwnode, DOMAIN_BUS_ANY);
+	if (!domain)
+		return -EINVAL;
+	dev_info(&spi->dev, "found domain: %s\n", domain->name);
+
+	irq = irq_create_fwspec_mapping(&fwspec);
+	if (irq <= 0)
+		return -EINVAL;
+
+	return irq;
+}
 
 static ssize_t
 spidev_sync_unlocked(struct spi_device *spi, struct spi_message *message)
@@ -679,6 +718,16 @@ static int spidev_release(struct inode *inode, struct file *filp)
 	return 0;
 }
 
+static unsigned int spidev_poll(struct file *filp, struct poll_table_struct *wait)
+{
+	struct spidev_data *spidev;
+	__poll_t mask = 0;
+	spidev = filp->private_data;
+	poll_wait(filp, &spidev->waitq, wait);
+	mask |= ( POLLIN | POLLRDNORM );
+	return mask;
+}
+
 static const struct file_operations spidev_fops = {
 	.owner =	THIS_MODULE,
 	/* REVISIT switch to aio primitives, so that userspace
@@ -690,6 +739,7 @@ static const struct file_operations spidev_fops = {
 	.unlocked_ioctl = spidev_ioctl,
 	.compat_ioctl = spidev_compat_ioctl,
 	.open =		spidev_open,
+	.poll =		spidev_poll,
 	.release =	spidev_release,
 	.llseek =	no_llseek,
 };
@@ -775,7 +825,7 @@ static int spidev_probe(struct spi_device *spi)
 {
 	int (*match)(struct device *dev);
 	struct spidev_data	*spidev;
-	int			status;
+	int			status, irq;
 	unsigned long		minor;
 
 	match = device_get_match_data(&spi->dev);
@@ -821,6 +871,24 @@ static int spidev_probe(struct spi_device *spi)
 	mutex_unlock(&device_list_lock);
 
 	spidev->speed_hz = spi->max_speed_hz;
+
+	init_waitqueue_head(&spidev->waitq);
+	//ACPI_GENERIC_GSI is NOT supported on x86 !?
+	//irq = fwnode_irq_get(dev_fwnode(&spi->dev), 0);
+	irq = spidev_irq_get(spi);
+	if (irq < 0) {
+		dev_info(&spi->dev, "fail to get device irq %d\n", irq);
+	} else {
+		dev_dbg(&spi->dev, "got mapped irq %d\n", irq);
+		status = request_irq(irq, handshake_irq,
+				IRQF_TRIGGER_RISING, dev_name(&spi->dev),
+				spidev);
+		if (status) {
+			dev_dbg(&spi->dev, "unable to request irq %d\n", irq);
+			status = 0;
+		} else
+			spidev->irq = irq;
+	}
 
 	if (status == 0)
 		spi_set_drvdata(spi, spidev);
