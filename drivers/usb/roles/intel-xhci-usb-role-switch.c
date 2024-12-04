@@ -96,7 +96,7 @@
 /*  DAP eSS Port Status Register */
 #define R_DAP_ESS_PORT_STATUS_REG_0           0x608
 /* Port0 is configured as usb device mode */
-#define DEVICE_PORT_NUM                       0x00
+#define DEVICE_PORT_NUM                       0x04
 /* Enable USB DAP FEATURE */
 #define USB_DAP_ENABLED
 
