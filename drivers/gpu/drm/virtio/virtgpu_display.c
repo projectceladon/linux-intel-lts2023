@@ -55,8 +55,9 @@ static int virtio_irq_enable_vblank(struct drm_crtc *crtc)
 	struct virtio_gpu_device *vgdev = dev->dev_private;
 	struct virtio_gpu_output *output = drm_crtc_to_virtio_gpu_output(crtc);
 
-	virtio_gpu_vblank_poll_arm(vgdev->vblank[output->index].vblank.vq);
-	virtqueue_enable_cb(vgdev->vblank[output->index].vblank.vq);
+	do {
+		virtio_gpu_vblank_poll_arm(vgdev->vblank[output->index].vblank.vq);
+	} while (!virtqueue_enable_cb(vgdev->vblank[output->index].vblank.vq));
 	return 0;
 }
 
@@ -116,12 +117,63 @@ static void virtio_gpu_crtc_atomic_disable(struct drm_crtc *crtc,
 	struct drm_device *dev = crtc->dev;
 	struct virtio_gpu_device *vgdev = dev->dev_private;
 	struct virtio_gpu_output *output = drm_crtc_to_virtio_gpu_output(crtc);
+	const unsigned pipe = drm_crtc_index(crtc);
 
-	if(vgdev->has_vblank) {
+	/* Send cached event even it's still premature. */
+	if (vgdev->cache_event[pipe]) {
+		spin_lock_irq(&dev->event_lock);
+		drm_crtc_send_vblank_event(crtc, vgdev->cache_event[pipe]);
+		vgdev->cache_event[pipe] = NULL;
+		spin_unlock_irq(&dev->event_lock);
+		drm_crtc_vblank_put(crtc);
+	}
+
+	if (vgdev->has_vblank) {
 		drm_crtc_vblank_off(crtc);
 	}
+
 	virtio_gpu_cmd_set_scanout(vgdev, output->index, 0, 0, 0, 0, 0);
 	virtio_gpu_notify(vgdev);
+}
+
+static void virtio_gpu_crtc_atomic_begin(struct drm_crtc *crtc,
+					 struct drm_atomic_state *state)
+{
+	struct virtio_gpu_device *vgdev = crtc->dev->dev_private;
+	struct drm_device *drm = crtc->dev;
+	const unsigned pipe = drm_crtc_index(crtc);
+	struct drm_pending_vblank_event *e = crtc->state->event;
+
+	if (!vgdev->has_vblank || !crtc->state->event)
+		return;
+
+	if (drm_crtc_vblank_get(crtc)) {
+		/* Cannot enable vblank, send it right now. */
+		spin_lock_irq(&drm->event_lock);
+		drm_crtc_send_vblank_event(crtc, e);
+		spin_unlock_irq(&drm->event_lock);
+		crtc->state->event = NULL;
+		return;
+	}
+
+	if (!vgdev->has_flip_sequence) {
+		spin_lock_irq(&drm->event_lock);
+		/* Let drm_handle_vblank signal it later in the vblank interrupt
+		 * and the vblank refcount will be released at that time. */
+		drm_crtc_arm_vblank_event(crtc, e);
+		spin_unlock_irq(&drm->event_lock);
+	} else {
+		crtc->state->event->sequence =
+			atomic64_read(&vgdev->flip_sequence[pipe]) + 1;
+		if (vgdev->cache_event[pipe] != NULL) {
+			spin_lock_irq(&drm->event_lock);
+			drm_crtc_send_vblank_event(crtc, vgdev->cache_event[pipe]);
+			spin_unlock_irq(&drm->event_lock);
+			drm_crtc_vblank_put(crtc);
+		}
+		vgdev->cache_event[pipe] = crtc->state->event;
+	}
+	crtc->state->event = NULL;
 }
 
 static int virtio_gpu_crtc_atomic_check(struct drm_crtc *crtc,
@@ -161,18 +213,8 @@ static void virtio_gpu_crtc_atomic_flush(struct drm_crtc *crtc,
 	struct virtio_gpu_output *output = drm_crtc_to_virtio_gpu_output(crtc);
 	struct drm_device *drm = crtc->dev;
 	struct virtio_gpu_device *vgdev = drm->dev_private;
+	const unsigned pipe = drm_crtc_index(crtc);
 
-	if(vgdev->has_vblank) {
-		if (crtc->state->event) {
-			spin_lock_irq(&drm->event_lock);
-			if (drm_crtc_vblank_get(crtc) != 0)
-				drm_crtc_send_vblank_event(crtc, crtc->state->event);
-			else
-				drm_crtc_arm_vblank_event(crtc, crtc->state->event);
-			spin_unlock_irq(&drm->event_lock);
-			crtc->state->event = NULL;
-		}
-	}
 	if(vgdev->has_multi_plane)
 		virtio_gpu_resource_flush_sync(crtc);
 
@@ -192,6 +234,7 @@ static void virtio_gpu_crtc_atomic_flush(struct drm_crtc *crtc,
 
 static const struct drm_crtc_helper_funcs virtio_gpu_crtc_helper_funcs = {
 	.mode_set_nofb = virtio_gpu_crtc_mode_set_nofb,
+	.atomic_begin  = virtio_gpu_crtc_atomic_begin,
 	.atomic_check  = virtio_gpu_crtc_atomic_check,
 	.atomic_flush  = virtio_gpu_crtc_atomic_flush,
 	.atomic_enable = virtio_gpu_crtc_atomic_enable,
@@ -415,6 +458,79 @@ static const struct drm_mode_config_funcs virtio_gpu_mode_funcs = {
 	.atomic_commit = drm_atomic_helper_commit,
 };
 
+static void
+virtio_gpu_wait_for_vblanks(struct drm_device *dev,
+			    struct drm_atomic_state *old_state)
+{
+	struct virtio_gpu_device *vgdev = dev->dev_private;
+	struct drm_crtc *crtc;
+	struct drm_crtc_state *old_crtc_state, *new_crtc_state;
+	int i, ret;
+	unsigned int crtc_mask = 0;
+
+	 /*
+	  * Legacy cursor ioctls are completely unsynced, and userspace
+	  * relies on that (by doing tons of cursor updates).
+	  */
+	if (old_state->legacy_cursor_update)
+		return;
+
+	for_each_oldnew_crtc_in_state(old_state, crtc, old_crtc_state, new_crtc_state, i) {
+		if (!new_crtc_state->active)
+			continue;
+
+		ret = drm_crtc_vblank_get(crtc);
+		if (ret != 0)
+			continue;
+
+		crtc_mask |= drm_crtc_mask(crtc);
+		old_state->crtcs[i].last_vblank_count =
+			vgdev->has_vblank && vgdev->has_flip_sequence ?
+			atomic64_read(&vgdev->flip_sequence[i]) :
+			drm_crtc_vblank_count(crtc);
+	}
+
+	for_each_old_crtc_in_state(old_state, crtc, old_crtc_state, i) {
+		if (!(crtc_mask & drm_crtc_mask(crtc)))
+			continue;
+
+		ret = wait_event_timeout(dev->vblank[i].queue,
+				old_state->crtcs[i].last_vblank_count !=
+					(vgdev->has_vblank && vgdev->has_flip_sequence ?
+						atomic64_read(&vgdev->flip_sequence[i]) :
+						drm_crtc_vblank_count(crtc)),
+				msecs_to_jiffies(100));
+
+		WARN(!ret, "[CRTC:%d:%s] vblank wait timed out\n",
+		     crtc->base.id, crtc->name);
+
+		drm_crtc_vblank_put(crtc);
+	}
+}
+
+static void virtio_gpu_commit_tail(struct drm_atomic_state *old_state)
+{
+	struct drm_device *dev = old_state->dev;
+
+	drm_atomic_helper_commit_modeset_disables(dev, old_state);
+
+	drm_atomic_helper_commit_planes(dev, old_state, 0);
+
+	drm_atomic_helper_commit_modeset_enables(dev, old_state);
+
+	drm_atomic_helper_fake_vblank(old_state);
+
+	drm_atomic_helper_commit_hw_done(old_state);
+
+	virtio_gpu_wait_for_vblanks(dev, old_state);
+
+	drm_atomic_helper_cleanup_planes(dev, old_state);
+}
+
+static struct drm_mode_config_helper_funcs virtgio_gpu_mode_config_helpers = {
+	.atomic_commit_tail = virtio_gpu_commit_tail,
+};
+
 int virtio_gpu_modeset_init(struct virtio_gpu_device *vgdev)
 {
 	int i, ret;
@@ -427,6 +543,7 @@ int virtio_gpu_modeset_init(struct virtio_gpu_device *vgdev)
 		return ret;
 
 	vgdev->ddev->mode_config.funcs = &virtio_gpu_mode_funcs;
+	vgdev->ddev->mode_config.helper_private = &virtgio_gpu_mode_config_helpers;
 
 	/* modes will be validated against the framebuffer size */
 	vgdev->ddev->mode_config.min_width = XRES_MIN;
