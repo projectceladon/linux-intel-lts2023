@@ -57,6 +57,7 @@ static int virtio_gpu_features(struct seq_file *m, void *data)
 	virtio_gpu_add_bool(m, "context init", vgdev->has_context_init);
 	virtio_gpu_add_bool(m, "scaling", vgdev->has_scaling);
 	virtio_gpu_add_bool(m, "allow_p2p", vgdev->has_allow_p2p);
+	virtio_gpu_add_bool(m, "flip_sequence", vgdev->has_flip_sequence);
 	virtio_gpu_add_bool(m, "multi_plane", vgdev->has_multi_plane);
 	virtio_gpu_add_bool(m, "rotation", vgdev->has_rotation);
 	virtio_gpu_add_bool(m, "pixel_blend_mode", vgdev->has_pixel_blend_mode);
