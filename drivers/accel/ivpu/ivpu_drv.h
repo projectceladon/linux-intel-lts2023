@@ -118,6 +118,9 @@ struct ivpu_device {
 
 	atomic64_t unique_id_counter;
 
+	ktime_t busy_start_ts;
+	ktime_t busy_time;
+
 	struct {
 		int boot;
 		int jsm;

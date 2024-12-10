@@ -14,6 +14,7 @@ intel_vpu-y := \
 	ivpu_jsm_msg.o \
 	ivpu_mmu.o \
 	ivpu_mmu_context.o \
-	ivpu_pm.o
+	ivpu_pm.o \
+	ivpu_sysfs.o
 
 obj-$(CONFIG_DRM_ACCEL_IVPU) += intel_vpu.o

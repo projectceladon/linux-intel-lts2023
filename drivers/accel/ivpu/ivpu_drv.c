@@ -25,6 +25,7 @@
 #include "ivpu_mmu.h"
 #include "ivpu_mmu_context.h"
 #include "ivpu_pm.h"
+#include "ivpu_sysfs.h"
 
 #ifndef DRIVER_VERSION_STR
 #define DRIVER_VERSION_STR __stringify(DRM_IVPU_DRIVER_MAJOR) "." \
@@ -660,6 +661,8 @@ static int ivpu_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		dev_err(&pdev->dev, "Failed to initialize VPU device: %d\n", ret);
 		return ret;
 	}
+
+	ivpu_sysfs_init(vdev);
 
 	ret = drm_dev_register(&vdev->drm, 0);
 	if (ret) {
