@@ -269,8 +269,6 @@ struct drm_gem_object *virtgpu_gem_prime_import_sg_table(
 		return ERR_PTR(-ENODEV);
 	}
 
-	drm_info(dev, "%s: table = %p, orig_nents = %u, nents = %u\n",
-		__func__, table, table->orig_nents, table->nents);
 	obj = drm_gem_shmem_prime_import_sg_table(dev, attach, table);
 	if (IS_ERR(obj)) {
 		return ERR_CAST(obj);
@@ -288,10 +286,19 @@ struct drm_gem_object *virtgpu_gem_prime_import_sg_table(
 	}
 
 	bo->guest_blob = true;
+	bo->prime = true;
 	params.blob_mem = VIRTGPU_BLOB_MEM_GUEST;
 	params.blob_flags = VIRTGPU_BLOB_FLAG_USE_SHAREABLE;
 	params.blob = true;
 	params.size = size;
+
+	bo->nents = nents;
+	bo->ents = kmemdup(ents, nents * sizeof(struct virtio_gpu_mem_entry),
+			   GFP_KERNEL);
+	if (!bo->ents) {
+	      ret = -ENOMEM;
+	      goto err_free_ents;
+	}
 
 	virtio_gpu_cmd_resource_create_blob(vgdev, bo, &params,
 					    ents, nents);
@@ -299,6 +306,8 @@ struct drm_gem_object *virtgpu_gem_prime_import_sg_table(
 
 	return obj;
 
+err_free_ents:
+	kvfree(ents);
 err_put_id:
 	virtio_gpu_resource_id_put(vgdev, bo->hw_res_handle);
 	return ERR_PTR(ret);
