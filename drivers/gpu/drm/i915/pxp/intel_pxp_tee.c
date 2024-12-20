@@ -71,39 +71,41 @@ int intel_pxp_tee_io_message(struct intel_pxp *pxp,
 	 */
 	if (!pxp_component) {
 		ret = -ENODEV;
+		drm_err(&i915->drm, "PXP component not found\n");
 		goto unlock;
 	}
 
 	if (pxp->mei_pxp_last_msg_interrupted) {
 		/* read and drop data from the previous iteration */
-		ret = pxp_component->ops->recv(pxp_component->tee_dev, &tmp_drop_buf, 64);
-		if (ret == -EINTR)
+		ret = pxp_component->ops->recv(pxp_component->tee_dev, &tmp_drop_buf, 64, 1);
+		if (ret == -EINTR) {
+			drm_err(&i915->drm, "Failed to receive last tee message\n");
 			goto unlock;
-
+		}
 		pxp->mei_pxp_last_msg_interrupted = false;
 	}
 
-	ret = pxp_component->ops->send(pxp_component->tee_dev, msg_in, msg_in_size);
+	ret = pxp_component->ops->send(pxp_component->tee_dev, msg_in, msg_in_size, 1);
+
 	if (ret) {
 		/* flag on next msg to drop interrupted msg */
 		if (ret == -EINTR)
 			pxp->mei_pxp_last_msg_interrupted = true;
-		drm_err(&i915->drm, "Failed to send PXP TEE message\n");
+		drm_err(&i915->drm, "Failed to send tee message (%d)\n", ret);
 		goto unlock;
 	}
 
-	ret = pxp_component->ops->recv(pxp_component->tee_dev, msg_out, msg_out_max_size);
+	ret = pxp_component->ops->recv(pxp_component->tee_dev, msg_out, msg_out_max_size, 1);
 	if (ret < 0) {
 		/* flag on next msg to drop interrupted msg */
 		if (ret == -EINTR)
 			pxp->mei_pxp_last_msg_interrupted = true;
-		drm_err(&i915->drm, "Failed to receive PXP TEE message\n");
+		drm_err(&i915->drm, "Failed to receive tee message (%d)\n", ret);
 		goto unlock;
 	}
 
 	if (ret > msg_out_max_size) {
-		drm_err(&i915->drm,
-			"Failed to receive PXP TEE message due to unexpected output size\n");
+		drm_err(&i915->drm, "Unexpected tee message output size (%d)\n", ret);
 		ret = -ENOSPC;
 		goto unlock;
 	}
@@ -130,12 +132,14 @@ int intel_pxp_tee_stream_message(struct intel_pxp *pxp,
 	struct scatterlist *sg;
 	int ret;
 
-	if (msg_in_len > max_msg_size || msg_out_len > max_msg_size)
+	if (msg_in_len > max_msg_size || msg_out_len > max_msg_size) {
+		drm_err(&i915->drm, "Failed to stream TEE message due to invalid params\n");
 		return -ENOSPC;
-
+	}
 	mutex_lock(&pxp->tee_mutex);
 
 	if (unlikely(!pxp_component || !pxp_component->ops->gsc_command)) {
+		drm_err(&i915->drm, "Invalid pxp component or gsc command\n");
 		ret = -ENODEV;
 		goto unlock;
 	}
@@ -149,7 +153,7 @@ int intel_pxp_tee_stream_message(struct intel_pxp *pxp,
 	ret = pxp_component->ops->gsc_command(pxp_component->tee_dev, client_id,
 					      fence_id, sg, msg_in_len, sg);
 	if (ret < 0)
-		drm_err(&i915->drm, "Failed to send PXP TEE gsc command\n");
+		drm_err(&i915->drm, "Failed to send PXP TEE gsc command (%d)\n", ret);
 	else
 		memcpy(msg_out, pxp->stream_cmd.vaddr, msg_out_len);
 
@@ -180,8 +184,11 @@ static int i915_pxp_tee_component_bind(struct device *i915_kdev,
 
 	if (!HAS_HECI_PXP(i915)) {
 		pxp->dev_link = device_link_add(i915_kdev, tee_kdev, DL_FLAG_STATELESS);
-		if (drm_WARN_ON(&i915->drm, !pxp->dev_link))
+		if (drm_WARN_ON(&i915->drm, !pxp->dev_link)) {
+			drm_err(&i915->drm,
+				"Failed to add device link for pxp component\n");
 			return -ENODEV;
+		}
 	}
 
 	mutex_lock(&pxp->tee_mutex);
@@ -194,7 +201,8 @@ static int i915_pxp_tee_component_bind(struct device *i915_kdev,
 			/* load huc via pxp */
 			ret = intel_huc_fw_load_and_auth_via_gsc(&uc->huc);
 			if (ret < 0)
-				gt_probe_error(gt, "failed to load huc via gsc %d\n", ret);
+				gt_probe_error(gt,
+					"Failed to load huc via gsc (%d)\n", ret);
 		}
 	}
 
@@ -254,22 +262,23 @@ static int alloc_streaming_command(struct intel_pxp *pxp)
 	/* allocate lmem object of one page for PXP command memory and store it */
 	obj = i915_gem_object_create_lmem(i915, PAGE_SIZE, I915_BO_ALLOC_CONTIGUOUS);
 	if (IS_ERR(obj)) {
-		drm_err(&i915->drm, "Failed to allocate pxp streaming command!\n");
+		drm_err(&i915->drm,
+			"Failed to allocate pxp streaming command\n");
 		return PTR_ERR(obj);
 	}
 
 	err = i915_gem_object_pin_pages_unlocked(obj);
 	if (err) {
-		drm_err(&i915->drm, "Failed to pin gsc message page!\n");
+		drm_err(&i915->drm, "Failed to pin gsc message page\n");
 		goto out_put;
 	}
 
 	/* map the lmem into the virtual memory pointer */
 	cmd = i915_gem_object_pin_map_unlocked(obj,
-					       intel_gt_coherent_map_type(pxp->ctrl_gt,
-									  obj, true));
+                                              intel_gt_coherent_map_type(pxp->ctrl_gt,
+                                                                         obj, true));
 	if (IS_ERR(cmd)) {
-		drm_err(&i915->drm, "Failed to map gsc message page!\n");
+		drm_err(&i915->drm, "Failed to map gsc message page\n");
 		err = PTR_ERR(cmd);
 		goto out_unpin;
 	}
@@ -359,18 +368,21 @@ int intel_pxp_tee_cmd_create_arb_session(struct intel_pxp *pxp,
 				       NULL);
 
 	if (ret) {
-		drm_err(&i915->drm, "Failed to send tee msg init arb session, ret=[%d]\n", ret);
+		drm_err(&i915->drm,
+			"Failed to send tee msg init arb session (%d)\n", ret);
 	} else if (msg_out.header.status != 0) {
 		if (is_fw_err_platform_config(pxp, msg_out.header.status)) {
-			drm_info_once(&i915->drm,
-				      "PXP init-arb-session-%d failed due to BIOS/SOC:0x%08x:%s\n",
-				      arb_session_id, msg_out.header.status,
-				      fw_err_to_string(msg_out.header.status));
-		} else {
-			drm_dbg(&i915->drm, "PXP init-arb-session--%d failed 0x%08x:%st:\n",
+			drm_err(&i915->drm,
+				"PXP init-arb-session-%d failed due to BIOS/SOC:0x%08x:%s\n",
 				arb_session_id, msg_out.header.status,
 				fw_err_to_string(msg_out.header.status));
-			drm_dbg(&i915->drm, "     cmd-detail: ID=[0x%08x],API-Ver-[0x%08x]\n",
+		} else {
+			drm_err(&i915->drm,
+				"PXP init-arb-session--%d failed 0x%08x:%st:\n",
+				arb_session_id, msg_out.header.status,
+				fw_err_to_string(msg_out.header.status));
+			drm_err(&i915->drm,
+				"     cmd-detail: ID=[0x%08x],API-Ver-[0x%08x]\n",
 				msg_in.header.command_id, msg_in.header.api_version);
 		}
 	}
@@ -402,23 +414,28 @@ try_again:
 				       NULL);
 
 	/* Cleanup coherency between GT and Firmware is critical, so try again if it fails */
-	if ((ret || msg_out.header.status != 0x0) && ++trials < 3)
+	if ((ret || msg_out.header.status != 0x0) && ++trials < 3) {
+		drm_err(&i915->drm, "Retried sending tee message\n");
 		goto try_again;
+	}
 
 	if (ret) {
-		drm_err(&i915->drm, "Failed to send tee msg for inv-stream-key-%u, ret=[%d]\n",
+		drm_err(&i915->drm,
+			"Failed to send tee msg for inv-stream-key-%u (%d)\n",
 			session_id, ret);
 	} else if (msg_out.header.status != 0) {
 		if (is_fw_err_platform_config(pxp, msg_out.header.status)) {
-			drm_info_once(&i915->drm,
-				      "PXP inv-stream-key-%u failed due to BIOS/SOC :0x%08x:%s\n",
-				      session_id, msg_out.header.status,
-				      fw_err_to_string(msg_out.header.status));
-		} else {
-			drm_dbg(&i915->drm, "PXP inv-stream-key-%u failed 0x%08x:%s:\n",
+			drm_err(&i915->drm,
+				"PXP inv-stream-key-%u failed due to BIOS/SOC :0x%08x:%s\n",
 				session_id, msg_out.header.status,
 				fw_err_to_string(msg_out.header.status));
-			drm_dbg(&i915->drm, "     cmd-detail: ID=[0x%08x],API-Ver-[0x%08x]\n",
+		} else {
+			drm_err(&i915->drm,
+				"PXP inv-stream-key-%u failed 0x%08x:%s:\n",
+				session_id, msg_out.header.status,
+				fw_err_to_string(msg_out.header.status));
+			drm_err(&i915->drm,
+				"     cmd-detail: ID=[0x%08x],API-Ver-[0x%08x]\n",
 				msg_in.header.command_id, msg_in.header.api_version);
 		}
 	}
