@@ -151,7 +151,7 @@ static int mei_fwver(struct mei_cl_device *cldev)
 	ret = __mei_cl_send(cldev->cl, (u8 *)&req, sizeof(req), 0,
 			    MEI_CL_IO_TX_BLOCKING);
 	if (ret < 0) {
-		dev_info(&cldev->dev, "Could not send ReqFWVersion cmd ret = %d\n", ret);
+		dev_err(&cldev->dev, "Could not send ReqFWVersion cmd ret = %d\n", ret);
 		return ret;
 	}
 
@@ -163,7 +163,7 @@ static int mei_fwver(struct mei_cl_device *cldev)
 		 * Should be at least one version block,
 		 * error out if nothing found
 		 */
-		dev_info(&cldev->dev, "Could not read FW version ret = %d\n", bytes_recv);
+		dev_err(&cldev->dev, "Could not read FW version ret = %d\n", bytes_recv);
 		return -EIO;
 	}
 
@@ -221,14 +221,14 @@ static void mei_mkhi_fix(struct mei_cl_device *cldev)
 	if (cldev->bus->fw_f_fw_ver_supported) {
 		ret = mei_fwver(cldev);
 		if (ret < 0)
-			dev_info(&cldev->dev, "FW version command failed %d\n",
+			dev_err(&cldev->dev, "FW version command failed %d\n",
 				 ret);
 	}
 
 	if (cldev->bus->hbm_f_os_supported) {
 		ret = mei_osver(cldev);
 		if (ret < 0)
-			dev_info(&cldev->dev, "OS version command failed %d\n",
+			dev_err(&cldev->dev, "OS version command failed %d\n",
 				 ret);
 	}
 	mei_cldev_disable(cldev);
@@ -251,7 +251,7 @@ static void mei_gsc_mkhi_ver(struct mei_cl_device *cldev)
 
 	ret = mei_fwver(cldev);
 	if (ret < 0)
-		dev_info(&cldev->dev, "FW version command failed %d\n", ret);
+		dev_err(&cldev->dev, "FW version command failed %d\n", ret);
 	mei_cldev_disable(cldev);
 }
 
@@ -282,7 +282,7 @@ static void mei_gsc_mkhi_fix_ver(struct mei_cl_device *cldev)
 
 	ret = mei_fwver(cldev);
 	if (ret < 0)
-		dev_info(&cldev->dev, "FW version command failed %d\n",
+		dev_err(&cldev->dev, "FW version command failed %d\n",
 			 ret);
 out:
 	mei_cldev_disable(cldev);
