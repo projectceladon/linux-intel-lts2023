@@ -487,6 +487,7 @@ static void pxp_terminate_complete(struct intel_pxp *pxp)
 {
 	/* Re-create the arb session after teardown handle complete */
 	if (pxp->hw_state_invalidated) {
+		drm_dbg(&pxp->ctrl_gt->i915->drm, "PXP: creating arb_session after invalidation");
 		pxp_create_arb_session(pxp);
 		pxp->hw_state_invalidated = false;
 	}
@@ -507,6 +508,8 @@ static void pxp_session_work(struct work_struct *work)
 
 	if (!events)
 		return;
+
+	drm_dbg(&gt->i915->drm, "PXP: processing event-flags 0x%08x", events);
 
 	if (events & PXP_INVAL_REQUIRED)
 		intel_pxp_invalidate(pxp);
