@@ -101,10 +101,30 @@ virtio_gpu_debugfs_host_visible_mm(struct seq_file *m, void *data)
 	return 0;
 }
 
+static int
+virtio_gpu_debugfs_objects(struct seq_file *m, void *data)
+{
+	struct drm_info_node *node = (struct drm_info_node *)m->private;
+	struct virtio_gpu_device *vgdev = node->minor->dev->dev_private;
+	struct virtio_gpu_object_restore *curr, *tmp;
+
+	list_for_each_entry_safe(curr, tmp, &vgdev->obj_rec, node) {
+		seq_printf(m, "hw_res_handle=%u, prime=%d\n",
+			   curr->bo->hw_res_handle, curr->bo->prime);
+		if (curr->bo->prime)
+			for (unsigned i = 0; i < curr->bo->nents; ++i)
+				seq_printf(m, "\taddr=%lx, size=%x\n",
+					   curr->bo->ents[i].addr,
+					   curr->bo->ents[i].length);
+	}
+	return 0;
+}
+
 static struct drm_info_list virtio_gpu_debugfs_list[] = {
 	{ "virtio-gpu-features", virtio_gpu_features },
 	{ "virtio-gpu-irq-fence", virtio_gpu_debugfs_irq_info, 0, NULL },
 	{ "virtio-gpu-host-visible-mm", virtio_gpu_debugfs_host_visible_mm },
+	{ "virtio-gpu-objects", virtio_gpu_debugfs_objects },
 };
 
 #define VIRTIO_GPU_DEBUGFS_ENTRIES ARRAY_SIZE(virtio_gpu_debugfs_list)
