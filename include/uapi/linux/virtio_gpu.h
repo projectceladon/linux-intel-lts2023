@@ -489,6 +489,7 @@ struct virtio_gpu_config {
 	__le32 num_scanouts;
 	__le32 num_capsets;
 	__le32 num_pipe;
+	__le32 output_bitmask;
 };
 
 /* simple formats for fbcon/X use */
