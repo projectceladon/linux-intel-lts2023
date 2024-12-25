@@ -327,6 +327,12 @@ int virtio_gpu_init(struct virtio_device *vdev, struct drm_device *dev)
 	for(i=0; i<vgdev->num_vblankq; i++)
 		spin_lock_init(&vgdev->vblank[i].vblank.qlock);
 
+	if (vgdev->has_allow_p2p) {
+		virtio_cread_le(vgdev->vdev, struct virtio_gpu_config,
+                               output_bitmask, &vgdev->output_cap_mask);
+		DRM_INFO("p2p crtc bitmask 0x%x \r\n", vgdev->output_cap_mask);
+	}
+
 	ret = virtio_gpu_find_vqs(vgdev);
 	if (ret) {
 		DRM_ERROR("failed to find virt queues\n");

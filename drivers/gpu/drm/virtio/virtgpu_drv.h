@@ -97,6 +97,8 @@ struct virtio_gpu_object {
 
 	int uuid_state;
 	uuid_t uuid;
+	/* indicating the obj in lmem or system memory */
+	int locate;
 	/* Address cache for prime object */
 	struct virtio_gpu_mem_entry *ents;
 	uint32_t nents;
@@ -254,6 +256,8 @@ struct virtio_gpu_device {
 	atomic64_t flip_sequence[VIRTIO_GPU_MAX_SCANOUTS];
 	uint32_t num_scanouts;
 	uint32_t num_vblankq;
+	/* Setting '1' indicates the spcecific scanout is for dgpu output*/
+	uint32_t output_cap_mask;
 	struct virtio_gpu_queue ctrlq;
 	struct virtio_gpu_queue cursorq;
 
