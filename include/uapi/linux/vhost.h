@@ -219,4 +219,6 @@
  */
 #define VHOST_VDPA_RESUME		_IO(VHOST_VIRTIO, 0x7E)
 
+/* VHOST_VDMABUF specific defines */
+#define VHOST_VDMABUF_SET_RUNNING       _IOW(VHOST_VIRTIO, 0x90, int)
 #endif
