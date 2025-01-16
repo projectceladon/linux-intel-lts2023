@@ -52,7 +52,9 @@ const char *usbcore_name = "usbcore";
 static bool nousb;	/* Disable USB when built into kernel image */
 
 module_param(nousb, bool, 0444);
-
+static char intel_btdev[128];
+module_param_string(intel_btdev, intel_btdev, sizeof(intel_btdev), S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(quirks, "intel usb bluetooths device IDs");
 /*
  * for external read access to <nousb>
  */
@@ -586,8 +588,29 @@ static char *usb_devnode(const struct device *dev,
 			 umode_t *mode, kuid_t *uid, kgid_t *gid)
 {
 	const struct usb_device *usb_dev;
-
+	char *p;
 	usb_dev = to_usb_device(dev);
+	u16 vid = le16_to_cpu(usb_dev->descriptor.idVendor);
+	u16 pid = le16_to_cpu(usb_dev->descriptor.idProduct);
+	p = intel_btdev;
+	while (*p) {
+	/* Each entry consists of VID:PID*/
+		if (vid == simple_strtoul(p, &p, 16) &&
+			*p == ':' &&
+			pid == simple_strtoul(p+1, &p, 16)) {
+				dev_info(&usb_dev->dev,
+				"Intel Bluetooth USB device(%04x:%04x)\n",
+				vid, pid);
+	      return kasprintf(GFP_KERNEL, "bus/usb/%03d/btusb",
+			  usb_dev->bus->busnum);
+		}
+	   /* Move forward to the next entry */
+		while (*p) {
+			if (*p++ == ',')
+				break;
+		}
+	}
+
 	return kasprintf(GFP_KERNEL, "bus/usb/%03d/%03d",
 			 usb_dev->bus->busnum, usb_dev->devnum);
 }
