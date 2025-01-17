@@ -119,11 +119,11 @@ static void virtio_gpu_crtc_atomic_disable(struct drm_crtc *crtc,
 	struct virtio_gpu_output *output = drm_crtc_to_virtio_gpu_output(crtc);
 	const unsigned pipe = drm_crtc_index(crtc);
 
+	struct drm_pending_vblank_event *e = xchg(&vgdev->cache_event[pipe], NULL);
 	/* Send cached event even it's still premature. */
-	if (vgdev->cache_event[pipe]) {
+	if (e) {
 		spin_lock_irq(&dev->event_lock);
-		drm_crtc_send_vblank_event(crtc, vgdev->cache_event[pipe]);
-		vgdev->cache_event[pipe] = NULL;
+		drm_crtc_send_vblank_event(crtc, e);
 		spin_unlock_irq(&dev->event_lock);
 		drm_crtc_vblank_put(crtc);
 	}
@@ -142,7 +142,7 @@ static void virtio_gpu_crtc_atomic_begin(struct drm_crtc *crtc,
 	struct virtio_gpu_device *vgdev = crtc->dev->dev_private;
 	struct drm_device *drm = crtc->dev;
 	const unsigned pipe = drm_crtc_index(crtc);
-	struct drm_pending_vblank_event *e = crtc->state->event;
+	struct drm_pending_vblank_event *old_e, *e = crtc->state->event;
 
 	if (!vgdev->has_vblank || !crtc->state->event)
 		return;
@@ -165,13 +165,13 @@ static void virtio_gpu_crtc_atomic_begin(struct drm_crtc *crtc,
 	} else {
 		crtc->state->event->sequence =
 			atomic64_read(&vgdev->flip_sequence[pipe]) + 1;
-		if (vgdev->cache_event[pipe] != NULL) {
+		old_e = xchg(&vgdev->cache_event[pipe], crtc->state->event);
+		if (old_e) {
 			spin_lock_irq(&drm->event_lock);
-			drm_crtc_send_vblank_event(crtc, vgdev->cache_event[pipe]);
+			drm_crtc_send_vblank_event(crtc, old_e);
 			spin_unlock_irq(&drm->event_lock);
 			drm_crtc_vblank_put(crtc);
 		}
-		vgdev->cache_event[pipe] = crtc->state->event;
 	}
 	crtc->state->event = NULL;
 }

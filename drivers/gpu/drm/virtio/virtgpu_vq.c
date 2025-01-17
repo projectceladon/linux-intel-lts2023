@@ -122,12 +122,11 @@ void virtio_gpu_vblank_ack(struct virtqueue *vq)
 	if (!vgdev->has_flip_sequence)
 		return;
 
-	struct drm_pending_vblank_event *e = vgdev->cache_event[target];
+	struct drm_pending_vblank_event *e = xchg(&vgdev->cache_event[target], NULL);
 	if (e && drm_vblank_passed(atomic64_read(&vgdev->flip_sequence[target]),
 				   e->sequence)) {
 		spin_lock_irqsave(&dev->event_lock, irqflags);
 		drm_crtc_send_vblank_event(&vgdev->outputs[target].crtc, e);
-		vgdev->cache_event[target] = NULL;
 		spin_unlock_irqrestore(&dev->event_lock, irqflags);
 		drm_crtc_vblank_put(&vgdev->outputs[target].crtc);
 	}
