@@ -102,6 +102,7 @@ struct virtio_vdmabuf_attach {
 
 #define VDMABUF_PRODUCER 0x1
 #define VDMABUF_CONSUMER 0x2
+#define VDMABUF_MASTER_CONSUMER 0x4
 
 #define VIRTIO_VDMABUF_IOCTL_ROLE \
 _IOC(_IOC_NONE, 'G', 3, sizeof(struct virtio_vdmabuf_role))
