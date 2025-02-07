@@ -113,6 +113,10 @@ void virtio_gpu_cleanup_object(struct virtio_gpu_object *bo)
 		drm_gem_object_release(&vram->base.base.base);
 		kfree(vram);
 	}
+
+	if (bo->prime)
+		kfree(bo->ents);
+
 	virtio_gpu_object_del_restore_list(vgdev, bo);
 }
 
@@ -292,10 +296,17 @@ int virtio_gpu_object_restore_all(struct virtio_gpu_device *vgdev)
 	int ret;
 
 	list_for_each_entry_safe(curr, tmp, &vgdev->obj_rec, node) {
-		ret = virtio_gpu_object_shmem_init(vgdev, curr->bo, &ents, &nents);
-		if (ret)
-			break;
-
+		if (curr->bo->prime) {
+			nents = curr->bo->nents;
+			ents = kmemdup(curr->bo->ents,
+				       nents * sizeof(struct virtio_gpu_mem_entry),
+				       GFP_KERNEL);
+		} else {
+			ret = virtio_gpu_object_shmem_init(vgdev, curr->bo, &ents, &nents);
+			if (ret)
+				break;
+		}
+ 
 		if (curr->params.blob) {
 			virtio_gpu_cmd_resource_create_blob(vgdev, curr->bo, &curr->params,
 							    ents, nents);

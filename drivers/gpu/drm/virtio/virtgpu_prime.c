@@ -151,6 +151,7 @@ struct drm_gem_object *virtgpu_gem_prime_import(struct drm_device *dev,
 	struct device *attach_dev = dev->dev;
 	struct virtio_gpu_device *vgdev = dev->dev_private;
 	int ret;
+	bool p2p = false;
 
 	if (dma_buf->ops == &virtgpu_dmabuf_ops.ops) {
 		obj = dma_buf->priv;
@@ -170,8 +171,17 @@ struct drm_gem_object *virtgpu_gem_prime_import(struct drm_device *dev,
 
 	if (!dev->driver->gem_prime_import_sg_table)
 		return ERR_PTR(-EINVAL);
+
+	spin_lock(&dma_buf->name_lock);
+	if(vgdev->has_allow_p2p && dma_buf->name) {
+		if(strcmp(dma_buf->name, "p2p") == 0)
+			p2p = true;
+
+	}
+	spin_unlock(&dma_buf->name_lock);
+
 	attach = ____dma_buf_dynamic_attach(dma_buf, attach_dev, NULL, NULL,
-					    vgdev->has_allow_p2p);
+					    p2p);
 	if (IS_ERR(attach))
 		return ERR_CAST(attach);
 
@@ -263,14 +273,14 @@ struct drm_gem_object *virtgpu_gem_prime_import_sg_table(
 	struct drm_gem_object *obj;
 	struct virtio_gpu_mem_entry *ents;
 	unsigned int nents;
+	struct dma_buf *dmabuf;
+	struct virtio_gpu_cmd cmd_set;
 	int ret;
 
 	if (!vgdev->has_resource_blob || vgdev->has_virgl_3d) {
 		return ERR_PTR(-ENODEV);
 	}
 
-	drm_info(dev, "%s: table = %p, orig_nents = %u, nents = %u\n",
-		__func__, table, table->orig_nents, table->nents);
 	obj = drm_gem_shmem_prime_import_sg_table(dev, attach, table);
 	if (IS_ERR(obj)) {
 		return ERR_CAST(obj);
@@ -287,18 +297,48 @@ struct drm_gem_object *virtgpu_gem_prime_import_sg_table(
 		goto err_put_id;
 	}
 
+	dmabuf = attach->dmabuf;
+	bo->protected = false;
+	if (dmabuf && dmabuf->exp_name &&
+		strcmp(dmabuf->exp_name, "i915_protected") == 0) {
+		bo->protected = true;
+	}
+
 	bo->guest_blob = true;
+	bo->prime = true;
+
+	if (attach->peer2peer)
+		bo->locate = 1;
+
 	params.blob_mem = VIRTGPU_BLOB_MEM_GUEST;
 	params.blob_flags = VIRTGPU_BLOB_FLAG_USE_SHAREABLE;
 	params.blob = true;
 	params.size = size;
 
+	bo->nents = nents;
+	bo->ents = kmemdup(ents, nents * sizeof(struct virtio_gpu_mem_entry),
+			   GFP_KERNEL);
+	if (!bo->ents) {
+	      ret = -ENOMEM;
+	      goto err_free_ents;
+	}
+
 	virtio_gpu_cmd_resource_create_blob(vgdev, bo, &params,
 					    ents, nents);
+	if (bo->protected) {
+		cmd_set.cmd = VIRTIO_GPU_TUNNEL_CMD_SET_BO_PROTECTION;
+		cmd_set.size = 2;
+		cmd_set.data32[0]= bo->hw_res_handle;
+		cmd_set.data32[1]= bo->protected;
+		virtio_gpu_cmd_send_misc(vgdev, 0, 0, &cmd_set, 1);
+	}
+
 	virtio_gpu_object_save_restore_list(vgdev, bo, &params);
 
 	return obj;
 
+err_free_ents:
+	kvfree(ents);
 err_put_id:
 	virtio_gpu_resource_id_put(vgdev, bo->hw_res_handle);
 	return ERR_PTR(ret);

@@ -112,6 +112,7 @@ static int virtio_gpu_getparam_ioctl(struct drm_device *dev, void *data,
 		break;
 	case VIRTGPU_PARAM_ALLOW_P2P:
 		value = vgdev->has_allow_p2p ? 1 : 0;
+		value = (value & 0xffff) | ((vgdev->output_cap_mask & 0xffff) << 16);
 		break;
 	default:
 		return -EINVAL;

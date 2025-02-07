@@ -100,21 +100,43 @@ void virtio_gpu_vblank_ack(struct virtqueue *vq)
 	unsigned long irqflags;
 	unsigned int len;
 	unsigned int *ret_value;
-	int target = 0;
+	unsigned target = 0;
 
 	while((target < vgdev->num_vblankq) && (vgdev->vblank[target].vblank.vq != vq)) {
 		target++;
 	}
 
-	spin_lock_irqsave(&vgdev->vblank[target].vblank.qlock, irqflags);
-	if((ret_value = virtqueue_get_buf(vgdev->vblank[target].vblank.vq, &len)) != NULL) {
-
+	while ((ret_value = virtqueue_get_buf(vgdev->vblank[target].vblank.vq, &len)) != NULL) {
+		spin_lock_irqsave(&vgdev->vblank[target].vblank.qlock, irqflags);
 		virtgpu_irqqueue_buf(vgdev->vblank[target].vblank.vq, ret_value);
+		spin_unlock_irqrestore(&vgdev->vblank[target].vblank.qlock, irqflags);
+
+		drm_handle_vblank(dev, target);
+
+		if (*ret_value != 0) {
+			atomic64_set(&vgdev->flip_sequence[target], *ret_value);
+		}
+
 	}
 
-	spin_unlock_irqrestore(&vgdev->vblank[target].vblank.qlock, irqflags);
-	drm_handle_vblank(dev, target);
+	if (!vgdev->has_flip_sequence)
+		return;
 
+	struct drm_pending_vblank_event *e = xchg(&vgdev->cache_event[target], NULL);
+	if (e && drm_vblank_passed(atomic64_read(&vgdev->flip_sequence[target]),
+				   e->sequence)) {
+		spin_lock_irqsave(&dev->event_lock, irqflags);
+		drm_crtc_send_vblank_event(&vgdev->outputs[target].crtc, e);
+		spin_unlock_irqrestore(&dev->event_lock, irqflags);
+		drm_crtc_vblank_put(&vgdev->outputs[target].crtc);
+	}
+}
+
+void virtio_gpu_hdcp_ack(struct virtqueue *vq)
+{
+	struct drm_device *dev = vq->vdev->priv;
+	struct virtio_gpu_device *vgdev = dev->dev_private;
+	schedule_work(&vgdev->hdcpq.dequeue_work);
 }
 
 void virtio_gpu_cursor_ack(struct virtqueue *vq)
@@ -298,6 +320,38 @@ void virtio_gpu_dequeue_ctrl_func(struct work_struct *work)
 		list_del(&entry->list);
 		free_vbuf(vgdev, entry);
 	}
+}
+
+void virtio_gpu_dequeue_hdcp_func(struct work_struct *work)
+{
+	struct virtio_gpu_device *vgdev =
+		container_of(work, struct virtio_gpu_device,
+			     hdcpq.dequeue_work);
+	unsigned int len;
+	struct virtio_gpu_cp_notification *ret_value;
+	struct virtio_gpu_hdcp *hdcp;
+	struct virtio_gpu_output *output;
+	struct drm_connector *connector;
+	unsigned int value = 0;
+	unsigned long irqflags;
+
+	spin_lock_irqsave(&vgdev->hdcpq.qlock, irqflags);
+	ret_value = virtqueue_get_buf(vgdev->hdcpq.vq, &len);
+	spin_unlock_irqrestore(&vgdev->hdcpq.qlock, irqflags);
+	if (ret_value->id >= 0 && ret_value->id < VIRTIO_GPU_MAX_SCANOUTS) {
+		value = ret_value->value;
+		output = &vgdev->outputs[ret_value->id];
+		connector = &output->conn;
+		hdcp = &output->hdcp;
+		mutex_lock(&hdcp->mutex);
+		if (hdcp->value != value) {
+			hdcp->value = value;
+			drm_connector_get(connector);
+			schedule_work(&hdcp->prop_work);
+		}
+		mutex_unlock(&hdcp->mutex);
+	}
+	virtio_gpu_hdcp_notify(vgdev);
 }
 
 void virtio_gpu_dequeue_cursor_func(struct work_struct *work)
@@ -500,6 +554,16 @@ void virtio_gpu_vblankq_notify(struct virtio_gpu_device *vgdev)
 	}
 
 }
+
+void virtio_gpu_hdcp_notify(struct virtio_gpu_device *vgdev)
+{
+	struct scatterlist sg[1];
+	sg_init_one(sg, &vgdev->hdcp_buf, sizeof(vgdev->hdcp_buf));
+	virtqueue_add_inbuf(vgdev->hdcpq.vq, sg, 1, &vgdev->hdcp_buf, GFP_ATOMIC);
+
+	virtqueue_kick(vgdev->hdcpq.vq);
+}
+
 
 void virtio_gpu_notify(struct virtio_gpu_device *vgdev)
 {
@@ -1482,8 +1546,8 @@ void virtio_gpu_cmd_unmap(struct virtio_gpu_device *vgdev,
 	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
 }
 
-void
-virtio_gpu_cmd_resource_create_blob(struct virtio_gpu_device *vgdev,
+static void
+virtio_gpu_cmd_resource_create_blob_internal(struct virtio_gpu_device *vgdev,
 				    struct virtio_gpu_object *bo,
 				    struct virtio_gpu_object_params *params,
 				    struct virtio_gpu_mem_entry *ents,
@@ -1509,6 +1573,18 @@ virtio_gpu_cmd_resource_create_blob(struct virtio_gpu_device *vgdev,
 
 	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
 	bo->created = true;
+}
+
+void
+virtio_gpu_cmd_resource_create_blob(struct virtio_gpu_device *vgdev,
+				    struct virtio_gpu_object *bo,
+				    struct virtio_gpu_object_params *params,
+				    struct virtio_gpu_mem_entry *ents,
+				    uint32_t nents)
+{
+	if(bo->locate && vgdev->has_allow_p2p)
+		params->blob_flags |= VIRTGPU_BLOB_FLAG_USE_DEVICE_MEM;
+	virtio_gpu_cmd_resource_create_blob_internal(vgdev, bo, params, ents, nents);
 }
 
 void virtio_gpu_cmd_set_scanout_blob(struct virtio_gpu_device *vgdev,
@@ -1582,4 +1658,205 @@ void virtio_gpu_cmd_set_scaling(struct virtio_gpu_device *vgdev,
 	cmd_p->dst.y = cpu_to_le32(rect_dst->y1);
 
 	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
+}
+
+int virtio_gpu_cmd_backlight_update_status(struct virtio_gpu_device *vgdev,
+				     uint32_t backlight_id)
+{
+	struct virtio_gpu_backlight_update_status *cmd_p;
+	struct virtio_gpu_vbuffer *vbuf;
+
+	if (backlight_id >= vgdev->num_backlight) {
+		return -EINVAL;
+	}
+	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
+	memset(cmd_p, 0, sizeof(*cmd_p));
+	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_BACKLIGHT_UPDATE_STATUS);
+	cmd_p->backlight_id = cpu_to_le32(backlight_id);
+	cmd_p->brightness = cpu_to_le32(vgdev->backlight[backlight_id].brightness);
+	cmd_p->power = cpu_to_le32(vgdev->backlight[backlight_id].power);
+
+	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
+	virtio_gpu_notify(vgdev);
+	return 0;
+}
+
+static void virtio_gpu_cmd_get_backlightness_cb(struct virtio_gpu_device *vgdev,
+					       struct virtio_gpu_vbuffer *vbuf)
+{
+	struct virtio_gpu_get_brightness *cmd_p =
+		(struct virtio_gpu_get_brightness *)vbuf->buf;
+	struct virtio_gpu_resp_brightness *resp =
+		(struct virtio_gpu_resp_brightness *)vbuf->resp_buf;
+	int32_t brightness = le32_to_cpu(resp->brightness);
+	uint32_t backlight_id = cmd_p->backlight_id;
+	if (backlight_id < vgdev->num_backlight) {
+		vgdev->backlight[backlight_id].brightness = brightness;
+	}
+	complete(&vbuf->notify);
+}
+
+int virtio_gpu_cmd_get_brightness(struct virtio_gpu_device *vgdev,
+				     uint32_t backlight_id)
+{
+	struct virtio_gpu_get_brightness *cmd_p;
+	struct virtio_gpu_vbuffer *vbuf;
+	void *resp_buf;
+	int ret = 0;
+
+	if (backlight_id >= vgdev->num_backlight)
+		return -EINVAL;
+	resp_buf = kzalloc(sizeof(struct virtio_gpu_resp_brightness),
+			   GFP_KERNEL);
+	if (!resp_buf)
+		return -ENOMEM;
+
+	cmd_p = virtio_gpu_alloc_cmd_resp
+		(vgdev, &virtio_gpu_cmd_get_backlightness_cb, &vbuf,
+		 sizeof(*cmd_p), sizeof(struct virtio_gpu_resp_brightness),
+		 resp_buf);
+	memset(cmd_p, 0, sizeof(*cmd_p));
+
+	init_completion(&vbuf->notify);
+	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_BACKLIGHT_GET);
+	cmd_p->backlight_id = backlight_id;
+	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
+	virtio_gpu_notify(vgdev);
+	ret = wait_for_completion_interruptible_timeout(&vbuf->notify, 100*HZ);
+	if (ret <= 0)
+		return -ETIME;
+	return 0;
+}
+
+static void virtio_gpu_cmd_get_backlight_info_cb(struct virtio_gpu_device *vgdev,
+					       struct virtio_gpu_vbuffer *vbuf)
+{
+	struct virtio_gpu_get_backlight_info *cmd_p =
+		(struct virtio_gpu_get_backlight_info *)vbuf->buf;
+	struct virtio_gpu_resp_backlight_info *resp =
+		(struct virtio_gpu_resp_backlight_info *)vbuf->resp_buf;
+	int32_t brightness = le32_to_cpu(resp->brightness);
+	int32_t max_brightness = le32_to_cpu(resp->max_brightness);
+	int32_t power = le32_to_cpu(resp->power);
+	int32_t type = le32_to_cpu(resp->type);
+	int32_t scale = le32_to_cpu(resp->scale);
+	uint32_t backlight_id = cmd_p->backlight_id;
+	if (backlight_id < vgdev->num_backlight) {
+		vgdev->backlight[backlight_id].brightness = brightness;
+		vgdev->backlight[backlight_id].max_brightness = max_brightness;
+		vgdev->backlight[backlight_id].power = power;
+		if (type > 0 && type < BACKLIGHT_TYPE_MAX)
+			vgdev->backlight[backlight_id].type = type;
+		else
+			vgdev->backlight[backlight_id].type = BACKLIGHT_RAW;
+		if (scale >= BACKLIGHT_SCALE_UNKNOWN && scale <= BACKLIGHT_SCALE_NON_LINEAR)
+			vgdev->backlight[backlight_id].scale = scale;
+		else
+			vgdev->backlight[backlight_id].scale = BACKLIGHT_SCALE_UNKNOWN;
+	}
+	complete(&vbuf->notify);
+}
+
+int virtio_gpu_cmd_backlight_query(struct virtio_gpu_device *vgdev,
+				     uint32_t backlight_id)
+{
+	struct virtio_gpu_get_backlight_info *cmd_p;
+	struct virtio_gpu_vbuffer *vbuf;
+	void *resp_buf;
+	int ret = 0;
+
+	if (backlight_id >= vgdev->num_backlight)
+		return -EINVAL;
+	resp_buf = kzalloc(sizeof(struct virtio_gpu_resp_backlight_info),
+			   GFP_KERNEL);
+	if (!resp_buf)
+		return -ENOMEM;
+
+	cmd_p = virtio_gpu_alloc_cmd_resp
+		(vgdev, &virtio_gpu_cmd_get_backlight_info_cb, &vbuf,
+		 sizeof(*cmd_p), sizeof(struct virtio_gpu_resp_backlight_info),
+		 resp_buf);
+	init_completion(&vbuf->notify);
+	memset(cmd_p, 0, sizeof(*cmd_p));
+
+	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_BACKLIGHT_QUERY);
+	cmd_p->backlight_id = backlight_id;
+	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
+	virtio_gpu_notify(vgdev);
+	ret = wait_for_completion_interruptible_timeout(&vbuf->notify, 100*HZ);
+	if (ret <= 0)
+		return -ETIME;
+	return 0;
+}
+
+int virtio_gpu_cmd_cp_set(struct virtio_gpu_device *vgdev,
+				     uint32_t scanout_id,
+				     uint32_t type, uint32_t cp)
+{
+	struct virtio_gpu_cp_set *cmd_p;
+	struct virtio_gpu_vbuffer *vbuf;
+
+	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
+	memset(cmd_p, 0, sizeof(*cmd_p));
+	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_CP_SET);
+	cmd_p->type = cpu_to_le32(type);
+	cmd_p->scanout_id = cpu_to_le32(scanout_id);
+	cmd_p->cp = cpu_to_le32(cp);
+	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
+	virtio_gpu_notify(vgdev);
+	return 0;
+
+}
+
+static void virtio_gpu_cmd_cp_query_cb(struct virtio_gpu_device *vgdev,
+					       struct virtio_gpu_vbuffer *vbuf)
+{
+	struct virtio_gpu_cp_query *cmd_p =
+		(struct virtio_gpu_cp_query *)vbuf->buf;
+	struct virtio_gpu_resp_cp_query *resp =
+		(struct virtio_gpu_resp_cp_query *)vbuf->resp_buf;
+	struct virtio_gpu_output *output;
+	uint32_t hdcp2 = le32_to_cpu(resp->hdcp2);
+	uint32_t connector_hdcp2 = le32_to_cpu(resp->connector_hdcp2);
+	uint32_t scanout_id = cmd_p->scanout_id;
+	if (scanout_id < vgdev->num_scanouts) {
+		output = &vgdev->outputs[scanout_id];
+		output->hdcp.hdcp2 = hdcp2;
+		output->hdcp.connector_hdcp2 = connector_hdcp2;
+		output->hdcp.query_done = true;
+	}
+	wake_up(&vgdev->resp_wq);
+}
+
+int virtio_gpu_cmd_cp_query(struct virtio_gpu_device *vgdev,
+					uint32_t scanout_id)
+{
+	struct virtio_gpu_cp_query *cmd_p;
+	struct virtio_gpu_vbuffer *vbuf;
+	void *resp_buf;
+	int ret;
+
+	if (scanout_id >= vgdev->num_scanouts) {
+		return -EINVAL;
+	}
+	resp_buf = kzalloc(sizeof(struct virtio_gpu_resp_cp_query),
+			   GFP_KERNEL);
+	if (!resp_buf)
+		return -ENOMEM;
+
+	cmd_p = virtio_gpu_alloc_cmd_resp
+		(vgdev, &virtio_gpu_cmd_cp_query_cb, &vbuf,
+		 sizeof(*cmd_p), sizeof(struct virtio_gpu_resp_cp_query),
+		 resp_buf);
+	memset(cmd_p, 0, sizeof(*cmd_p));
+	vgdev->outputs[scanout_id].hdcp.query_done = false;
+	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_CP_QUERY);
+	cmd_p->scanout_id = cpu_to_le32(scanout_id);
+	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
+	virtio_gpu_notify(vgdev);
+	ret = wait_event_timeout(vgdev->resp_wq,
+			vgdev->outputs[scanout_id].hdcp.query_done, 100 * HZ);
+	if (ret <= 0)
+		return -ETIME;
+	return 0;
 }

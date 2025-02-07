@@ -24,6 +24,11 @@
 #define PRELIM_DRM_IOCTL_I915_PXP_OPS	DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_PXP_OPS, \
 						 struct prelim_drm_i915_pxp_ops)
 
+#define PRELIM_DRM_I915_PXP_BO_OPS		0x53
+
+#define PRELIM_DRM_IOCTL_I915_PXP_BO_OPS	DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_PXP_BO_OPS, \
+						 struct prelim_drm_i915_pxp_bo_ops)
+
 /* End PRELIM ioctl's */
 
 /*
@@ -144,6 +149,12 @@ struct prelim_drm_i915_pxp_ops {
 
 	__u64 params; /* in/out - pointer to data matching the action */
 } __attribute__((packed));
+
+struct prelim_drm_i915_pxp_bo_ops {
+	__u32 handle;
+	__u32 assign;
+} __attribute__((packed));
+
 
 #endif /* __I915_DRM_PRELIM_H__ */
 
