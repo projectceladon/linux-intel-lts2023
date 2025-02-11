@@ -69,8 +69,8 @@ static inline void __xe_gt_printfn_dbg(struct drm_printer *p, struct va_format *
 	 * The original xe_gt_dbg() callsite annotations are useless here,
 	 * redirect to the tweaked drm_dbg_printer() instead.
 	 */
-	dbg = drm_dbg_printer(&gt_to_xe(gt)->drm, DRM_UT_DRIVER, NULL);
-	dbg.origin = p->origin;
+	dbg = drm_debug_printer(NULL);
+//	dbg.origin = p->origin;
 
 	drm_printf(&dbg, "GT%u: %pV", gt->info.id, vaf);
 }
@@ -116,7 +116,7 @@ static inline struct drm_printer xe_gt_dbg_printer(struct xe_gt *gt)
 	struct drm_printer p = {
 		.printfn = __xe_gt_printfn_dbg,
 		.arg = gt,
-		.origin = (const void *)_THIS_IP_,
+		//.origin = (const void *)_THIS_IP_,
 	};
 	return p;
 }

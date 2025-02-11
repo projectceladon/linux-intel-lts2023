@@ -32,7 +32,7 @@ DECLARE_EVENT_CLASS(xe_bo,
 			     ),
 
 		    TP_fast_assign(
-			   __assign_str(dev);
+			   __assign_str(dev, __dev_name_bo(bo));
 			   __entry->size = bo->size;
 			   __entry->flags = bo->flags;
 			   __entry->vm = bo->vm;
@@ -69,9 +69,9 @@ TRACE_EVENT(xe_bo_move,
 	    TP_fast_assign(
 		   __entry->bo      = bo;
 		   __entry->size = bo->size;
-		   __assign_str(new_placement_name);
-		   __assign_str(old_placement_name);
-		   __assign_str(device_id);
+		   __assign_str(new_placement_name, xe_mem_type_to_name[new_placement]);
+		   __assign_str(old_placement_name, xe_mem_type_to_name[old_placement]);
+		   __assign_str(device_id, __dev_name_bo(bo));
 		   __entry->move_lacks_source = move_lacks_source;
 		   ),
 	    TP_printk("move_lacks_source:%s, migrate object %p [size %zu] from %s to %s device_id:%s",
@@ -94,7 +94,7 @@ DECLARE_EVENT_CLASS(xe_vma,
 			     ),
 
 		    TP_fast_assign(
-			   __assign_str(dev);
+			   __assign_str(dev, __dev_name_vma(vma));
 			   __entry->vma = vma;
 			   __entry->asid = xe_vma_vm(vma)->usm.asid;
 			   __entry->start = xe_vma_start(vma);
@@ -188,7 +188,7 @@ DECLARE_EVENT_CLASS(xe_vm,
 			     ),
 
 		    TP_fast_assign(
-			   __assign_str(dev);
+			   __assign_str(dev, __dev_name_vm(vm));
 			   __entry->vm = vm;
 			   __entry->asid = vm->usm.asid;
 			   ),

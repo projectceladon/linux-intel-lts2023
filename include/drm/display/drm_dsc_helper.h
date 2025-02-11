@@ -9,6 +9,7 @@
 #define DRM_DSC_HELPER_H_
 
 #include <drm/display/drm_dsc.h>
+#include <drm/drm_print.h>
 
 enum drm_dsc_params_type {
 	DRM_DSC_1_2_444,
@@ -28,6 +29,7 @@ int drm_dsc_compute_rc_parameters(struct drm_dsc_config *vdsc_cfg);
 u8 drm_dsc_initial_scale_value(const struct drm_dsc_config *dsc);
 u32 drm_dsc_flatness_det_thresh(const struct drm_dsc_config *dsc);
 u32 drm_dsc_get_bpp_int(const struct drm_dsc_config *vdsc_cfg);
+void drm_dsc_dump_config(struct drm_printer *p, int indent, const struct drm_dsc_config *cfg);
 
 #endif /* _DRM_DSC_HELPER_H_ */
 

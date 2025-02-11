@@ -22,20 +22,66 @@
 #include "intel_display_irq.h"
 #include "intel_display_types.h"
 #include "intel_dmc.h"
-#include "intel_dmc_wl.h"
+//#include "intel_dmc_wl.h"
 #include "intel_dp.h"
-#include "intel_encoder.h"
+//#include "intel_encoder.h"
 #include "intel_fbdev.h"
 #include "intel_hdcp.h"
 #include "intel_hotplug.h"
 #include "intel_opregion.h"
 #include "xe_module.h"
 
+#define DISPLAY_RUNTIME_INFO_XE(display)      (&(display)->info.__runtime_info)
+#define HAS_DISPLAY_XE(__display)            (DISPLAY_RUNTIME_INFO_XE(__display)->pipe_mask != 0)
+
 /* Xe device functions */
+void intel_encoder_suspend_all(struct intel_display *display)
+{
+	struct intel_encoder *encoder;
+
+	if (!HAS_DISPLAY_XE(display))
+		return;
+
+	/*
+	 * TODO: check and remove holding the modeset locks if none of
+	 * the encoders depends on this.
+	 */
+	drm_modeset_lock_all(display->drm);
+	for_each_intel_encoder(display->drm, encoder)
+		if (encoder->suspend)
+			encoder->suspend(encoder);
+	drm_modeset_unlock_all(display->drm);
+
+	for_each_intel_encoder(display->drm, encoder)
+		if (encoder->suspend_complete)
+			encoder->suspend_complete(encoder);
+}
+
+void intel_encoder_shutdown_all(struct intel_display *display)
+{
+	struct intel_encoder *encoder;
+
+	if (!HAS_DISPLAY_XE(display))
+		return;
+
+	/*
+	 * TODO: check and remove holding the modeset locks if none of
+	 * the encoders depends on this.
+	 */
+	drm_modeset_lock_all(display->drm);
+	for_each_intel_encoder(display->drm, encoder)
+		if (encoder->shutdown)
+			encoder->shutdown(encoder);
+	drm_modeset_unlock_all(display->drm);
+
+	for_each_intel_encoder(display->drm, encoder)
+		if (encoder->shutdown_complete)
+			encoder->shutdown_complete(encoder);
+}
 
 static bool has_display(struct xe_device *xe)
 {
-	return HAS_DISPLAY(&xe->display);
+	return HAS_DISPLAY_XE(&xe->display);
 }
 
 /**
@@ -435,7 +481,7 @@ void xe_display_pm_runtime_suspend_late(struct xe_device *xe)
 	 * that we will be on dynamic DC states with DMC wakelock enabled. We
 	 * need to flush the release work in that case.
 	 */
-	intel_dmc_wl_flush_release_work(display);
+//	intel_dmc_wl_flush_release_work(display);
 }
 
 void xe_display_pm_shutdown_late(struct xe_device *xe)

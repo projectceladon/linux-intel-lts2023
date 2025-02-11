@@ -319,6 +319,19 @@ static ssize_t devcd_read_from_sgtable(char *buffer, loff_t offset,
  * by the device coredump framework and when it is no longer needed the @free
  * function will be called to free the data.
  */
+void dev_coredump_put(struct device *dev)
+{
+	struct device *existing;
+
+	existing = class_find_device(&devcd_class, NULL, dev,
+				     devcd_match_failing);
+	if (existing) {
+		devcd_free(existing, NULL);
+		put_device(existing);
+	}
+}
+EXPORT_SYMBOL_GPL(dev_coredump_put);
+
 void dev_coredumpm(struct device *dev, struct module *owner,
 		   void *data, size_t datalen, gfp_t gfp,
 		   ssize_t (*read)(char *buffer, loff_t offset, size_t count,
@@ -392,6 +405,82 @@ void dev_coredumpm(struct device *dev, struct module *owner,
 	free(data);
 }
 EXPORT_SYMBOL_GPL(dev_coredumpm);
+
+void dev_coredumpm_timeout(struct device *dev, struct module *owner,
+			   void *data, size_t datalen, gfp_t gfp,
+			   ssize_t (*read)(char *buffer, loff_t offset,
+					   size_t count, void *data,
+					   size_t datalen),
+			   void (*free)(void *data),
+			   unsigned long timeout)
+{
+	static atomic_t devcd_count = ATOMIC_INIT(0);
+	struct devcd_entry *devcd;
+	struct device *existing;
+
+	if (devcd_disabled)
+		goto free;
+
+	existing = class_find_device(&devcd_class, NULL, dev,
+				     devcd_match_failing);
+	if (existing) {
+		put_device(existing);
+		goto free;
+	}
+
+	if (!try_module_get(owner))
+		goto free;
+
+	devcd = kzalloc(sizeof(*devcd), gfp);
+	if (!devcd)
+		goto put_module;
+
+	devcd->owner = owner;
+	devcd->data = data;
+	devcd->datalen = datalen;
+	devcd->read = read;
+	devcd->free = free;
+	devcd->failing_dev = get_device(dev);
+	devcd->delete_work = false;
+
+	mutex_init(&devcd->mutex);
+	device_initialize(&devcd->devcd_dev);
+
+	dev_set_name(&devcd->devcd_dev, "devcd%d",
+		     atomic_inc_return(&devcd_count));
+	devcd->devcd_dev.class = &devcd_class;
+
+	mutex_lock(&devcd->mutex);
+	dev_set_uevent_suppress(&devcd->devcd_dev, true);
+	if (device_add(&devcd->devcd_dev))
+		goto put_device;
+
+	/*
+	 * These should normally not fail, but there is no problem
+	 * continuing without the links, so just warn instead of
+	 * failing.
+	 */
+	if (sysfs_create_link(&devcd->devcd_dev.kobj, &dev->kobj,
+			      "failing_device") ||
+	    sysfs_create_link(&dev->kobj, &devcd->devcd_dev.kobj,
+		              "devcoredump"))
+		dev_warn(dev, "devcoredump create_link failed\n");
+
+	dev_set_uevent_suppress(&devcd->devcd_dev, false);
+	kobject_uevent(&devcd->devcd_dev.kobj, KOBJ_ADD);
+	INIT_DELAYED_WORK(&devcd->del_wk, devcd_del);
+	schedule_delayed_work(&devcd->del_wk, timeout);
+	mutex_unlock(&devcd->mutex);
+	return;
+ put_device:
+	put_device(&devcd->devcd_dev);
+	mutex_unlock(&devcd->mutex);
+ put_module:
+	module_put(owner);
+ free:
+	free(data);
+}
+EXPORT_SYMBOL_GPL(dev_coredumpm_timeout);
 
 /**
  * dev_coredumpsg - create device coredump that uses scatterlist as data

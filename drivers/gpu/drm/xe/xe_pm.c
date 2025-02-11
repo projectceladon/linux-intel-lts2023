@@ -577,7 +577,7 @@ int xe_pm_runtime_get_ioctl(struct xe_device *xe)
  */
 bool xe_pm_runtime_get_if_active(struct xe_device *xe)
 {
-	return pm_runtime_get_if_active(xe->drm.dev) > 0;
+	return pm_runtime_get_if_active(xe->drm.dev, true) > 0;
 }
 
 /**

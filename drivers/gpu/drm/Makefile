@@ -22,6 +22,7 @@ drm-y := \
 	drm_drv.o \
 	drm_dumb_buffers.o \
 	drm_edid.o \
+	drm_eld.o \
 	drm_encoder.o \
 	drm_file.o \
 	drm_fourcc.o \
@@ -80,7 +81,9 @@ obj-$(CONFIG_DRM_PANEL_ORIENTATION_QUIRKS) += drm_panel_orientation_quirks.o
 # Memory-management helpers
 #
 #
-obj-$(CONFIG_DRM_EXEC) += drm_exec.o
+#obj-$(CONFIG_DRM_EXEC) += drm_exec.o
+obj-y += drm_exec.o
+
 
 obj-$(CONFIG_DRM_BUDDY) += drm_buddy.o
 
@@ -145,6 +148,7 @@ obj-$(CONFIG_DRM_RADEON)+= radeon/
 obj-$(CONFIG_DRM_AMDGPU)+= amd/amdgpu/
 obj-$(CONFIG_DRM_AMDGPU)+= amd/amdxcp/
 obj-$(CONFIG_DRM_I915)	+= i915/
+obj-$(CONFIG_DRM_XE)    += xe/
 obj-$(CONFIG_DRM_KMB_DISPLAY)  += kmb/
 obj-$(CONFIG_DRM_MGAG200) += mgag200/
 obj-$(CONFIG_DRM_V3D)  += v3d/

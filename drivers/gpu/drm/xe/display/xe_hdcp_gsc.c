@@ -4,12 +4,12 @@
  */
 
 #include <drm/drm_print.h>
-#include <drm/intel/i915_hdcp_interface.h>
+#include <drm/i915_hdcp_interface.h>
 #include <linux/delay.h>
 
 #include "abi/gsc_command_header_abi.h"
 #include "intel_hdcp_gsc.h"
-#include "intel_hdcp_gsc_message.h"
+//#include "intel_hdcp_gsc_message.h"
 #include "xe_bo.h"
 #include "xe_device.h"
 #include "xe_device_types.h"
@@ -19,6 +19,7 @@
 #include "xe_map.h"
 #include "xe_pm.h"
 #include "xe_uc_fw.h"
+#include "intel_hdcp_gsc_message.h"
 
 #define HECI_MEADDRESS_HDCP 18
 
@@ -29,7 +30,6 @@ struct intel_hdcp_gsc_message {
 };
 
 #define HDCP_GSC_HEADER_SIZE sizeof(struct intel_gsc_mtl_header)
-
 bool intel_hdcp_gsc_cs_required(struct intel_display *display)
 {
 	return DISPLAY_VER(display) >= 14;

@@ -11,7 +11,7 @@
 
 #include <drm/drm_drv.h>
 #include <drm/drm_managed.h>
-#include <drm/intel/i915_drm.h>
+#include <drm/i915_drm.h>
 #include <generated/xe_wa_oob.h>
 
 #include "regs/xe_gt_regs.h"

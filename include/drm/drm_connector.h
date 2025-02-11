@@ -1892,6 +1892,12 @@ int drm_connector_init(struct drm_device *dev,
 		       struct drm_connector *connector,
 		       const struct drm_connector_funcs *funcs,
 		       int connector_type);
+int drm_connector_dynamic_init(struct drm_device *dev,
+			       struct drm_connector *connector,
+			       const struct drm_connector_funcs *funcs,
+			       int connector_type,
+			       struct i2c_adapter *ddc);
+
 int drm_connector_init_with_ddc(struct drm_device *dev,
 				struct drm_connector *connector,
 				const struct drm_connector_funcs *funcs,
