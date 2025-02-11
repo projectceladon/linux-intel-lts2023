@@ -210,6 +210,10 @@ static inline void memcpy_flushcache(void *dst, const void *src, size_t cnt)
 
 void *memchr_inv(const void *s, int c, size_t n);
 char *strreplace(char *str, char old, char new);
+static inline bool mem_is_zero(const void *s, size_t n)
+{
+	return !memchr_inv(s, 0, n);
+}
 
 extern void kfree_const(const void *x);
 

@@ -757,6 +757,37 @@ int drm_mode_getplane(struct drm_device *dev, void *data,
 	return 0;
 }
 
+bool drm_plane_has_format(struct drm_plane *plane,
+			  u32 format, u64 modifier)
+{
+	unsigned int i;
+
+	for (i = 0; i < plane->format_count; i++) {
+		if (format == plane->format_types[i])
+			break;
+	}
+	if (i == plane->format_count)
+		return false;
+
+	if (plane->funcs->format_mod_supported) {
+		if (!plane->funcs->format_mod_supported(plane, format, modifier))
+			return false;
+	} else {
+		if (!plane->modifier_count)
+			return true;
+
+		for (i = 0; i < plane->modifier_count; i++) {
+			if (modifier == plane->modifiers[i])
+				break;
+		}
+		if (i == plane->modifier_count)
+			return false;
+	}
+
+	return true;
+}
+EXPORT_SYMBOL(drm_plane_has_format);
+
 int drm_plane_check_pixel_format(struct drm_plane *plane,
 				 u32 format, u64 modifier)
 {

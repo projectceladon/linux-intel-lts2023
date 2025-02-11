@@ -2322,6 +2322,20 @@ drm_dp_get_quirks(const struct drm_dp_dpcd_ident *ident, bool is_branch)
 
 #undef DEVICE_ID_ANY
 #undef DEVICE_ID
+static void drm_dp_dump_desc(struct drm_dp_aux *aux,
+			     const char *device_name, const struct drm_dp_desc *desc)
+{
+	const struct drm_dp_dpcd_ident *ident = &desc->ident;
+
+	drm_dbg_kms(aux->drm_dev,
+		    "%s: %s: OUI %*phD dev-ID %*pE HW-rev %d.%d SW-rev %d.%d quirks 0x%04x\n",
+		    aux->name, device_name,
+		    (int)sizeof(ident->oui), ident->oui,
+		    (int)strnlen(ident->device_id, sizeof(ident->device_id)), ident->device_id,
+		    ident->hw_rev >> 4, ident->hw_rev & 0xf,
+		    ident->sw_major_rev, ident->sw_minor_rev,
+		    desc->quirks);
+}
 
 /**
  * drm_dp_read_desc - read sink/branch descriptor from DPCD
@@ -2359,6 +2373,34 @@ int drm_dp_read_desc(struct drm_dp_aux *aux, struct drm_dp_desc *desc,
 	return 0;
 }
 EXPORT_SYMBOL(drm_dp_read_desc);
+
+static int drm_dp_read_ident(struct drm_dp_aux *aux, unsigned int offset,
+                             struct drm_dp_dpcd_ident *ident)
+{
+        int ret;
+
+        ret = drm_dp_dpcd_read(aux, offset, ident, sizeof(*ident));
+
+        return ret < 0 ? ret : 0;
+}
+
+int drm_dp_dump_lttpr_desc(struct drm_dp_aux *aux, enum drm_dp_phy dp_phy)
+{
+	struct drm_dp_desc desc = {};
+	int ret;
+
+	if (drm_WARN_ON(aux->drm_dev, dp_phy < DP_PHY_LTTPR1 || dp_phy > DP_MAX_LTTPR_COUNT))
+		return -EINVAL;
+
+	ret = drm_dp_read_ident(aux, DP_OUI_PHY_REPEATER(dp_phy), &desc.ident);
+	if (ret < 0)
+		return ret;
+
+	drm_dp_dump_desc(aux, drm_dp_phy_name(dp_phy), &desc);
+
+	return 0;
+}
+EXPORT_SYMBOL(drm_dp_dump_lttpr_desc);
 
 /**
  * drm_dp_dsc_sink_bpp_incr() - Get bits per pixel increment
@@ -2929,6 +2971,133 @@ static const char *dp_content_type_get_name(enum dp_content_type content_type)
 		return "Reserved";
 	}
 }
+
+void drm_dp_vsc_sdp_log_xe(struct drm_printer *p, const struct drm_dp_vsc_sdp *vsc)
+{
+	drm_printf(p, "DP SDP: VSC, revision %u, length %u\n",
+		   vsc->revision, vsc->length);
+	drm_printf(p, "    pixelformat: %s\n",
+		   dp_pixelformat_get_name(vsc->pixelformat));
+	drm_printf(p, "    colorimetry: %s\n",
+		   dp_colorimetry_get_name(vsc->pixelformat, vsc->colorimetry));
+	drm_printf(p, "    bpc: %u\n", vsc->bpc);
+	drm_printf(p, "    dynamic range: %s\n",
+		   dp_dynamic_range_get_name(vsc->dynamic_range));
+	drm_printf(p, "    content type: %s\n",
+		   dp_content_type_get_name(vsc->content_type));
+}
+EXPORT_SYMBOL(drm_dp_vsc_sdp_log_xe);
+
+void drm_dp_as_sdp_log(struct drm_printer *p, const struct drm_dp_as_sdp *as_sdp)
+{
+	drm_printf(p, "DP SDP: AS_SDP, revision %u, length %u\n",
+		   as_sdp->revision, as_sdp->length);
+	drm_printf(p, "    vtotal: %d\n", as_sdp->vtotal);
+	drm_printf(p, "    target_rr: %d\n", as_sdp->target_rr);
+	drm_printf(p, "    duration_incr_ms: %d\n", as_sdp->duration_incr_ms);
+	drm_printf(p, "    duration_decr_ms: %d\n", as_sdp->duration_decr_ms);
+	drm_printf(p, "    operation_mode: %d\n", as_sdp->mode);
+}
+EXPORT_SYMBOL(drm_dp_as_sdp_log);
+
+/**
+ * drm_dp_as_sdp_supported() - check if adaptive sync sdp is supported
+ * @aux: DisplayPort AUX channel
+ * @dpcd: DisplayPort configuration data
+ *
+ * Returns true if adaptive sync sdp is supported, else returns false
+ */
+bool drm_dp_as_sdp_supported(struct drm_dp_aux *aux, const u8 dpcd[DP_RECEIVER_CAP_SIZE])
+{
+	u8 rx_feature;
+
+	if (dpcd[DP_DPCD_REV] < DP_DPCD_REV_13)
+		return false;
+
+	if (drm_dp_dpcd_readb(aux, DP_DPRX_FEATURE_ENUMERATION_LIST_CONT_1,
+			      &rx_feature) != 1) {
+		drm_dbg_dp(aux->drm_dev,
+			   "Failed to read DP_DPRX_FEATURE_ENUMERATION_LIST_CONT_1\n");
+		return false;
+	}
+
+	return (rx_feature & DP_ADAPTIVE_SYNC_SDP_SUPPORTED);
+}
+EXPORT_SYMBOL(drm_dp_as_sdp_supported);
+
+/**
+ * drm_dp_vsc_sdp_pack() - pack a given vsc sdp into generic dp_sdp
+ * @vsc: vsc sdp initialized according to its purpose as defined in
+ *       table 2-118 - table 2-120 in DP 1.4a specification
+ * @sdp: valid handle to the generic dp_sdp which will be packed
+ *
+ * Returns length of sdp on success and error code on failure
+ */
+ssize_t drm_dp_vsc_sdp_pack(const struct drm_dp_vsc_sdp *vsc,
+			    struct dp_sdp *sdp)
+{
+	size_t length = sizeof(struct dp_sdp);
+
+	memset(sdp, 0, sizeof(struct dp_sdp));
+
+	/*
+	 * Prepare VSC Header for SU as per DP 1.4a spec, Table 2-119
+	 * VSC SDP Header Bytes
+	 */
+	sdp->sdp_header.HB0 = 0; /* Secondary-Data Packet ID = 0 */
+	sdp->sdp_header.HB1 = vsc->sdp_type; /* Secondary-data Packet Type */
+	sdp->sdp_header.HB2 = vsc->revision; /* Revision Number */
+	sdp->sdp_header.HB3 = vsc->length; /* Number of Valid Data Bytes */
+
+	if (vsc->revision == 0x6) {
+		sdp->db[0] = 1;
+		sdp->db[3] = 1;
+	}
+
+	/*
+	 * Revision 0x5 and revision 0x7 supports Pixel Encoding/Colorimetry
+	 * Format as per DP 1.4a spec and DP 2.0 respectively.
+	 */
+	if (!(vsc->revision == 0x5 || vsc->revision == 0x7))
+		goto out;
+
+	/* VSC SDP Payload for DB16 through DB18 */
+	/* Pixel Encoding and Colorimetry Formats  */
+	sdp->db[16] = (vsc->pixelformat & 0xf) << 4; /* DB16[7:4] */
+	sdp->db[16] |= vsc->colorimetry & 0xf; /* DB16[3:0] */
+
+	switch (vsc->bpc) {
+	case 6:
+		/* 6bpc: 0x0 */
+		break;
+	case 8:
+		sdp->db[17] = 0x1; /* DB17[3:0] */
+		break;
+	case 10:
+		sdp->db[17] = 0x2;
+		break;
+	case 12:
+		sdp->db[17] = 0x3;
+		break;
+	case 16:
+		sdp->db[17] = 0x4;
+		break;
+	default:
+		WARN(1, "Missing case %d\n", vsc->bpc);
+		return -EINVAL;
+	}
+
+	/* Dynamic Range and Component Bit Depth */
+	if (vsc->dynamic_range == DP_DYNAMIC_RANGE_CTA)
+		sdp->db[17] |= 0x80;  /* DB17[7] */
+
+	/* Content Type */
+	sdp->db[18] = vsc->content_type & 0x7;
+
+out:
+	return length;
+}
+EXPORT_SYMBOL(drm_dp_vsc_sdp_pack);
 
 void drm_dp_vsc_sdp_log(const char *level, struct device *dev,
 			const struct drm_dp_vsc_sdp *vsc)
@@ -4091,3 +4260,13 @@ int drm_dp_bw_channel_coding_efficiency(bool is_uhbr)
 		return 800000;
 }
 EXPORT_SYMBOL(drm_dp_bw_channel_coding_efficiency);
+int drm_dp_max_dprx_data_rate(int max_link_rate, int max_lanes)
+{
+	int ch_coding_efficiency =
+		drm_dp_bw_channel_coding_efficiency(drm_dp_is_uhbr_rate(max_link_rate));
+
+	return DIV_ROUND_DOWN_ULL(mul_u32_u32(max_link_rate * 10 * max_lanes,
+					      ch_coding_efficiency),
+				  1000000 * 8);
+}
+EXPORT_SYMBOL(drm_dp_max_dprx_data_rate);
