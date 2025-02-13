@@ -3019,7 +3019,6 @@ static int icl_color_check(struct intel_crtc_state *crtc_state)
 	struct drm_property *gamma_mode_property = crtc_state->uapi.crtc->gamma_mode_property;
 	struct drm_property *degamma_mode_property = crtc_state->uapi.crtc->degamma_mode_property;
 	struct drm_property_enum *prop_enum;
-	u32 index = 0;
 	int ret;
 
 	ret = check_luts(crtc_state);
@@ -3061,7 +3060,6 @@ static int icl_color_check(struct intel_crtc_state *crtc_state)
 				}
 				break;
 			}
-			index++;
 		}
 	}
 

@@ -275,7 +275,6 @@ static ssize_t ivshm_region_read(struct file *filep, char __user *buf,
 {
 	struct ivshm_region_user *user = filep->private_data;
 	struct ivshm_region *iregion = user->iregion;
-	ssize_t ret = 0;
 
 	if (count == 0)
 		return 0;
@@ -299,7 +298,6 @@ static ssize_t ivshm_region_write(struct file *filep, const char __user *buf,
 {
 	struct ivshm_region_user *user = filep->private_data;
 	struct ivshm_region *iregion = user->iregion;
-	ssize_t ret = 0;
 
 	if (count == 0)
 		return 0;

@@ -672,19 +672,6 @@ static const struct intel_device_info rkl_info = {
 	.is_dgfx = 1, \
 	.has_heci_gscfi = 1
 
-static const struct intel_device_info dg1_info = {
-	GEN12_FEATURES,
-	DGFX_FEATURES,
-	.__runtime.graphics.ip.rel = 10,
-	PLATFORM(INTEL_DG1),
-	.require_force_probe = 1,
-	.__runtime.platform_engine_mask =
-		BIT(RCS0) | BIT(BCS0) | BIT(VECS0) |
-	  BIT(VCS0) | BIT(VCS2) | BIT(CCS0),
-	/* Wa_16011227922 */
-	.__runtime.ppgtt_size = 47,
-};
-
 static const struct intel_device_info adl_s_info = {
 	GEN12_FEATURES,
 	PLATFORM(INTEL_ALDERLAKE_S),
@@ -777,16 +764,6 @@ static const struct intel_device_info xehpsdv_info = {
 		BIT(VECS0) | BIT(VECS1) | \
 		BIT(VCS0) | BIT(VCS2) | \
 		BIT(CCS0) | BIT(CCS1) | BIT(CCS2) | BIT(CCS3)
-
-static const struct intel_device_info dg2_info = {
-	DG2_FEATURES,
-};
-
-static const struct intel_device_info ats_m_info = {
-	DG2_FEATURES,
-	.require_force_probe = 1,
-	.tuning_thread_rr_after_dep = 1,
-};
 
 #define XE_HPC_FEATURES \
 	XE_HP_FEATURES, \
@@ -930,15 +907,8 @@ static const struct pci_device_id pciidlist[] = {
 	INTEL_ADLS_IDS(&adl_s_info),
 	INTEL_ADLP_IDS(&adl_p_info),
 	INTEL_ADLN_IDS(&adl_p_info),
-#if 0
-	INTEL_DG1_IDS(&dg1_info),
-#endif
 	INTEL_RPLS_IDS(&adl_s_info),
 	INTEL_RPLP_IDS(&adl_p_info),
-#if 0
-	INTEL_DG2_IDS(&dg2_info),
-	INTEL_ATS_M_IDS(&ats_m_info),
-#endif
 	INTEL_MTL_IDS(&mtl_info),
 	{0, 0, 0}
 };

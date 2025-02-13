@@ -596,7 +596,7 @@ static struct page *dma_addr_to_page(struct virtio_shmem_device *vi_dev, dma_add
 	unsigned long pfn;
 
 	if (dma_handle >= vi_dev->shmem_sz) {
-		dev_warn(&vi_dev->pci_dev->dev, "DMA handle 0x%llx is out of shared memory region [0x%llx, 0x%llx)\n",
+		dev_warn(&vi_dev->pci_dev->dev, "DMA handle 0x%llx is out of shared memory region [%p, %p)\n",
 		     dma_handle, vi_dev->shmem, vi_dev->shmem + vi_dev->shmem_sz);
 		return NULL;
 	}
@@ -613,7 +613,7 @@ static dma_addr_t page_to_dma_addr(struct virtio_shmem_device *vi_dev, struct pa
 	pfn = page_to_pfn(page);
 	dma_handle = PFN_PHYS(pfn) - vi_dev->shmem_phys_base;
 	if (dma_handle >= vi_dev->shmem_sz) {
-		dev_warn(&vi_dev->pci_dev->dev, "PFN 0x%lx is out of shared memory region [0x%llx, 0x%llx)\n",
+		dev_warn(&vi_dev->pci_dev->dev, "PFN 0x%lx is out of shared memory region [%p, %p)\n",
 		     pfn, vi_dev->shmem, vi_dev->shmem + vi_dev->shmem_sz);
 		return 0;
 	}
@@ -824,7 +824,6 @@ void virtio_shmem_free_page(struct device *dev, struct page *page)
 
 void *virtio_shmem_alloc(struct device *dev, size_t size)
 {
-	struct pci_dev *pci_dev = to_pci_dev(dev);
 	void *addr;
 	dma_addr_t dma_handle;
 
