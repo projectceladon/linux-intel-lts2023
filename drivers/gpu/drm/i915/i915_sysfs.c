@@ -244,7 +244,6 @@ static ssize_t i915_gem_clients_state_read(struct file *filp,
 	struct device *kdev = container_of(kobj, struct device, kobj);
 	struct drm_minor *minor = dev_to_drm_minor(kdev);
 	struct drm_device *dev = minor->dev;
-	struct drm_i915_private *dev_priv = to_i915(dev);
 	struct drm_i915_error_state_buf error_str;
 	ssize_t ret_count = 0;
 	int ret;
@@ -390,7 +389,6 @@ int i915_gem_create_sysfs_file_entry(struct drm_device *dev,
 {
 	struct drm_i915_file_private *file_priv = file->driver_priv;
 	struct drm_i915_private *dev_priv = to_i915(dev);
-	struct device *kdev = dev_priv->drm.primary->kdev;
 
 	struct i915_gem_file_attr_priv *attr_priv;
 	struct bin_attribute *obj_attr;

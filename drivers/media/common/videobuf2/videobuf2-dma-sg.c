@@ -107,7 +107,6 @@ static void *vb2_dma_sg_alloc(struct vb2_buffer *vb, struct device *dev,
 	int ret;
 	int num_pages;
 	int i;
-	struct scatterlist *sg;
 
 	if (WARN_ON(!dev) || WARN_ON(!size))
 		return ERR_PTR(-EINVAL);

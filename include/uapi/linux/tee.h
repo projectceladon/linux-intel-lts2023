@@ -133,7 +133,7 @@ struct tee_ioctl_shm_register_fd_data {
 	__u64 size;
 	__u32 flags;
 	__s32 id;
-} __aligned(8);
+};
 
 /**
  * TEE_IOC_SHM_REGISTER_FD - register a shared memory from a file descriptor
