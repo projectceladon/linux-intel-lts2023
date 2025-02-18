@@ -1029,8 +1029,9 @@ EXPORT_SYMBOL_NS_GPL(dma_buf_dynamic_attach, DMA_BUF);
  */
 struct dma_buf_attachment *
 ____dma_buf_dynamic_attach(struct dma_buf *dmabuf, struct device *dev,
-			const struct dma_buf_attach_ops *importer_ops,
-			void *importer_priv, bool p2p)
+			   unsigned importer_type_id, unsigned flags,
+			   const struct dma_buf_attach_ops *importer_ops,
+			   void *importer_priv, bool p2p)
 {
 	struct dma_buf_attachment *attach;
 	int ret;
@@ -1046,6 +1047,8 @@ ____dma_buf_dynamic_attach(struct dma_buf *dmabuf, struct device *dev,
 		return ERR_PTR(-ENOMEM);
 
 	attach->dev = dev;
+	attach->importer_type_id = importer_type_id;
+	attach->flags = flags;
 	attach->dmabuf = dmabuf;
 	if (importer_ops)
 		attach->peer2peer = importer_ops->allow_peer2peer;
