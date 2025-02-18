@@ -535,6 +535,12 @@ struct dma_buf {
 	ANDROID_KABI_RESERVE(2);
 };
 
+#define DMA_BUF_DRIVER_TYPE_ID_GENERAL				0
+#define DMA_BUF_DRIVER_TYPE_ID_VIRTIO_GPU			2
+
+/* Set by exporter as an indicator that the buffer reiside in local memory. */
+#define DMABUF_ATTACH_FLAG_LMEM				(1lu << 0)
+
 /**
  * struct dma_buf_attach_ops - importer operations for an attachment
  *
@@ -586,6 +592,9 @@ struct dma_buf_attach_ops {
  * @importer_priv: importer specific attachment data.
  * @dma_map_attrs: DMA attributes to be used when the exporter maps the buffer
  * through dma_buf_map_attachment.
+ * @importer_type_id: used by exporter for identifying the importer
+ * @flags: shared by both exporter and importer for negotiation on the
+ * DMA mapping requirements.
  *
  * This structure holds the attachment information between the dma_buf buffer
  * and its user device(s). The list contains one attachment struct per device
@@ -610,6 +619,8 @@ struct dma_buf_attachment {
 
 	ANDROID_KABI_RESERVE(1);
 	ANDROID_KABI_RESERVE(2);
+	unsigned importer_type_id;
+	unsigned flags;
 };
 
 /**
@@ -621,6 +632,7 @@ struct dma_buf_attachment {
  * @flags:	mode flags for the file
  * @resv:	reservation-object, NULL to allocate default one
  * @priv:	Attach private data of allocator to this buffer
+ * @exporter_type:id: globally unique id for the exporter driver
  *
  * This structure holds the information required to export the buffer. Used
  * with dma_buf_export() only.
@@ -702,6 +714,7 @@ dma_buf_dynamic_attach(struct dma_buf *dmabuf, struct device *dev,
 		       void *importer_priv);
 struct dma_buf_attachment *
 ____dma_buf_dynamic_attach(struct dma_buf *dmabuf, struct device *dev,
+			   unsigned importer_type_id, unsigned flags,
 		           const struct dma_buf_attach_ops *importer_ops,
 		           void *importer_priv, bool p2p);
 void dma_buf_detach(struct dma_buf *dmabuf,
