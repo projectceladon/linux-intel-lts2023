@@ -180,8 +180,9 @@ struct drm_gem_object *virtgpu_gem_prime_import(struct drm_device *dev,
 	}
 	spin_unlock(&dma_buf->name_lock);
 
-	attach = ____dma_buf_dynamic_attach(dma_buf, attach_dev, NULL, NULL,
-					    p2p);
+	attach = ____dma_buf_dynamic_attach(dma_buf, attach_dev,
+					    DMA_BUF_DRIVER_TYPE_ID_VIRTIO_GPU,
+					    0, NULL, NULL, p2p);
 	if (IS_ERR(attach))
 		return ERR_CAST(attach);
 

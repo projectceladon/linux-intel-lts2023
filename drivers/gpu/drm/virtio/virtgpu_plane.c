@@ -23,6 +23,8 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include <linux/dma-buf.h>
+
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_damage_helper.h>
 #include <drm/drm_fourcc.h>
@@ -274,6 +276,26 @@ static int virtio_gpu_plane_atomic_check(struct drm_plane *plane,
 	if (IS_ERR(crtc_state))
                 return PTR_ERR(crtc_state);
 
+	/* Ensure lmem objects from i915_ag are attached to dGPU backing CRTC */
+	if (vgdev->output_cap_mask & (1lu << drm_crtc_index(new_plane_state->crtc))) {
+		for (int i = 0; i < DRM_FORMAT_MAX_PLANES; ++i) {
+			struct drm_gem_object *obj = new_plane_state->fb->obj[i];
+			if (!obj)
+				break;
+
+			if (!obj->import_attach)
+				return -EINVAL;
+
+			if (!(obj->import_attach->flags & DMABUF_ATTACH_FLAG_LMEM)) {
+				drm_dbg(vgdev->ddev, "cannot use non-i915_ag "
+					"buffer for crtc %u, driver name %s\n",
+					drm_crtc_index(new_plane_state->crtc),
+					obj->dev->driver->name);
+				return -EINVAL;
+			}
+		}
+	}
+
 	if(vgdev->has_scaling && (new_plane_state->fb->format->format != DRM_FORMAT_C8)) {
 		min_scale = 1;
 		max_scale = 0x30000-1;
@@ -332,7 +354,6 @@ static void virtio_gpu_resource_flush(struct drm_plane *plane,
 	struct virtio_gpu_object *bo;
 	struct virtio_gpu_object_array *objs = NULL;
 	struct virtio_gpu_fence *fence = NULL;
-	int i;
 
 	vgfb = to_virtio_gpu_framebuffer(plane->state->fb);
 	bo = gem_to_virtio_gpu_obj(vgfb->base.obj[0]);
