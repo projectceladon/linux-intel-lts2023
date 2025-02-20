@@ -1278,8 +1278,10 @@ static int __init mei_init(void)
 	int ret;
 
 	ret = class_register(&mei_class);
-	if (ret)
+	if (ret) {
+		pr_err("unable to register mei class\n");
 		return ret;
+	}
 
 	ret = alloc_chrdev_region(&mei_devt, 0, MEI_MAX_DEVS, "mei");
 	if (ret < 0) {
