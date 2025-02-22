@@ -87,7 +87,6 @@ static int iwl_mvm_vendor_get_fw_version(struct wiphy *wiphy,
 					 struct wireless_dev *wdev,
 					 const void *data, int data_len)
 {
-	int err = 0;
 	struct sk_buff *skb;
 	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
 	struct iwl_mvm *mvm = IWL_MAC80211_GET_MVM(hw);
@@ -108,11 +107,9 @@ static int iwl_mvm_vendor_get_drv_version(struct wiphy *wiphy,
 					  struct wireless_dev *wdev,
 					  const void *data, int data_len)
 {
-	int err = 0;
 	struct sk_buff *skb;
 	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
 	struct iwl_mvm *mvm = IWL_MAC80211_GET_MVM(hw);
-	const struct iwl_fw *fw = mvm->fw;
 
 	skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, sizeof(utsname()->release));
 	if (!skb)

@@ -3060,7 +3060,6 @@ static int icl_color_check(struct intel_crtc_state *crtc_state)
 				}
 				break;
 			}
-			index++;
 		}
 	}
 
