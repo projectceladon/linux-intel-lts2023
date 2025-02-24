@@ -75,8 +75,6 @@
 
 #define VIRTIO_GPU_F_VBLANK              7
 
-#define VIRTIO_GPU_F_ALLOW_P2P           13
-
 /*
  * VIRTIO_GPU_CMD_FLUSH_SPRITE
  * VIRTIO_GPU_CMD_FLUSH_SYNC
@@ -94,10 +92,17 @@
 
 #define VIRTIO_GPU_F_MULTI_PLANAR_FORMAT 12
 
+#define VIRTIO_GPU_F_ALLOW_P2P           13
+
+#define VIRTIO_GPU_F_FLIP_SEQUENCE       14
+
+#define VIRTIO_GPU_F_HDCP                15
+
 #define VIRTIO_GPU_TUNNEL_CMD_SET_ROTATION 1
 #define VIRTIO_GPU_TUNNEL_CMD_SET_BLEND 2
 #define VIRTIO_GPU_TUNNEL_CMD_SET_PLANARS 3
 #define VIRTIO_GPU_TUNNEL_CMD_SET_SPRITE_SCALING 4
+#define VIRTIO_GPU_TUNNEL_CMD_SET_BO_PROTECTION 5
 
 enum virtio_gpu_ctrl_type {
 	VIRTIO_GPU_UNDEFINED = 0,
@@ -141,6 +146,10 @@ enum virtio_gpu_ctrl_type {
 	VIRTIO_GPU_CMD_UPDATE_CURSOR = 0x0300,
 	VIRTIO_GPU_CMD_MOVE_CURSOR,
 
+	/*CONTENT PROTECTION*/
+	VIRTIO_GPU_CMD_CP_SET = 0x0500,
+	VIRTIO_GPU_CMD_CP_QUERY = 0x0501,
+
 	/* success responses */
 	VIRTIO_GPU_RESP_OK_NODATA = 0x1100,
 	VIRTIO_GPU_RESP_OK_DISPLAY_INFO,
@@ -149,6 +158,7 @@ enum virtio_gpu_ctrl_type {
 	VIRTIO_GPU_RESP_OK_EDID,
 	VIRTIO_GPU_RESP_OK_RESOURCE_UUID,
 	VIRTIO_GPU_RESP_OK_MAP_INFO,
+	VIRTIO_GPU_RESP_OK_CP_QUERY = 0x1150,
 
 	/* error responses */
 	VIRTIO_GPU_RESP_ERR_UNSPEC = 0x1200,
@@ -479,6 +489,33 @@ struct virtio_gpu_resp_edid {
 	__u8 edid[1024];
 };
 
+/* VIRTIO_GPU_CMD_CP_SET */
+struct virtio_gpu_cp_set {
+	struct virtio_gpu_ctrl_hdr hdr;
+	__le32 scanout_id;
+	__le32 type;
+	__le32 cp;
+	__le32 padding;
+};
+
+/* VIRTIO_GPU_CMD_CP_QUERY */
+struct virtio_gpu_cp_query {
+	struct virtio_gpu_ctrl_hdr hdr;
+	__le32 scanout_id;
+	__le32 padding;
+};
+
+struct virtio_gpu_resp_cp_query {
+	struct virtio_gpu_ctrl_hdr hdr;
+	__le32 hdcp2;
+	__le32 connector_hdcp2;
+};
+
+struct virtio_gpu_cp_notification {
+	__le32 id;
+	__le32 value;
+};
+
 #define VIRTIO_GPU_EVENT_DISPLAY (1 << 0)
 
 struct virtio_gpu_config {
@@ -487,6 +524,7 @@ struct virtio_gpu_config {
 	__le32 num_scanouts;
 	__le32 num_capsets;
 	__le32 num_pipe;
+	__le32 output_bitmask;
 };
 
 /* simple formats for fbcon/X use */

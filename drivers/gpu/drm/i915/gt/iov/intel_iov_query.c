@@ -21,6 +21,31 @@
 #include "intel_iov_types.h"
 #include "intel_iov_query.h"
 
+int pxp_info_query(struct intel_iov *iov, int *device_idx, int *device_vfid)
+{
+	int ret = 0;
+	//printk("bosheng pxp_inf_query, %d, %d\n", len,VF2PF_PXP_QUERY_REQUEST_MSG_LEN);
+	u32 response[VF2PF_PXP_QUERY_RESPONSE_MSG_LEN];
+	u32 request[VF2PF_PXP_QUERY_REQUEST_MSG_LEN];
+	request[0] =  FIELD_PREP(GUC_HXG_MSG_0_ORIGIN, GUC_HXG_ORIGIN_HOST) |
+		FIELD_PREP(GUC_HXG_MSG_0_TYPE, GUC_HXG_TYPE_REQUEST) |
+		FIELD_PREP(GUC_HXG_REQUEST_MSG_0_ACTION, IOV_ACTION_VF2PF_PXP_QUERY);
+
+
+	ret = intel_iov_relay_send_to_pf(&iov->relay,
+					 request, ARRAY_SIZE(request),
+					 response, ARRAY_SIZE(response));
+	if (unlikely(ret < 0))
+		return ret;
+
+	if (unlikely(ret != VF2PF_PXP_QUERY_RESPONSE_MSG_LEN))
+		return -EPROTO;
+
+	*device_idx = response[1];
+	*device_vfid = response[2];
+	return ret;
+}
+
 static int guc_action_vf_reset(struct intel_guc *guc)
 {
 	u32 request[GUC_HXG_REQUEST_MSG_MIN_LEN] = {
