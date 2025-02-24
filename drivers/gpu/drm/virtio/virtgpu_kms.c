@@ -267,7 +267,9 @@ int virtio_gpu_init(struct virtio_device *vdev, struct drm_device *dev)
 	if (virtio_has_feature(vgdev->vdev, VIRTIO_GPU_F_HDCP)) {
 		vgdev->has_hdcp = true;
 	}
-
+	if (virtio_has_feature(vgdev->vdev, VIRTIO_GPU_F_PROTECTED_BO)) {
+		vgdev->has_protected_bo = true;
+	}
 	if (virtio_has_feature(vgdev->vdev, VIRTIO_GPU_F_RESOURCE_BLOB)) {
 		vgdev->has_resource_blob = true;
 		if (virtio_has_feature(vgdev->vdev, VIRTIO_GPU_F_MODIFIER)) {
@@ -303,12 +305,13 @@ int virtio_gpu_init(struct virtio_device *vdev, struct drm_device *dev)
 		 vgdev->has_resource_blob ? '+' : '-',
 		 vgdev->has_host_visible ? '+' : '-');
 
-	DRM_INFO("features: %cscaling %cvblank %cmodifier %cmulti_plane %chdcp",
+	DRM_INFO("features: %cscaling %cvblank %cmodifier %cmulti_plane %chdcp %cprotected_bo",
 		 vgdev->has_scaling ? '+' : '-',
 		 vgdev->has_vblank ? '+' : '-',
 		 vgdev->has_modifier ? '+' : '-',
 		 vgdev->has_multi_plane ? '+' : '-',
-		 vgdev->has_hdcp ? '+' : '-');
+		 vgdev->has_hdcp ? '+' : '-',
+		 vgdev->has_protected_bo ? '+' : '-');
 
 	DRM_INFO("features: %ccontext_init %callow_p2p %cflip_sequence\n",
 		 vgdev->has_context_init ? '+' : '-',
