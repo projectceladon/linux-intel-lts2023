@@ -64,6 +64,7 @@ static int virtio_gpu_features(struct seq_file *m, void *data)
 	virtio_gpu_add_bool(m, "multi_planar", vgdev->has_multi_planar);
 	virtio_gpu_add_bool(m, "modifier", vgdev->has_modifier);
 	virtio_gpu_add_bool(m, "hdcp", vgdev->has_hdcp);
+	virtio_gpu_add_bool(m, "protected_bo", vgdev->has_protected_bo);
 	virtio_gpu_add_int(m, "cap sets", vgdev->num_capsets);
 	virtio_gpu_add_int(m, "scanouts", vgdev->num_scanouts);
 	if (vgdev->host_visible_region.len) {

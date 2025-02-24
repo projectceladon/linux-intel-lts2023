@@ -84,6 +84,7 @@ struct virtio_gpu_object_params {
 	uint32_t blob_mem;
 	uint32_t blob_flags;
 	uint64_t blob_id;
+	bool protected;
 };
 
 struct virtio_gpu_object {
@@ -102,6 +103,7 @@ struct virtio_gpu_object {
 	/* Address cache for prime object */
 	struct virtio_gpu_mem_entry *ents;
 	uint32_t nents;
+	bool protected;
 };
 #define gem_to_virtio_gpu_obj(gobj) \
 	container_of((gobj), struct virtio_gpu_object, base.base)
@@ -303,6 +305,7 @@ struct virtio_gpu_device {
 	bool has_pixel_blend_mode;
 	bool has_multi_planar;
 	bool has_hdcp;
+	bool has_protected_bo;
 	bool has_indirect;
 	bool has_resource_assign_uuid;
 	bool has_resource_blob;
