@@ -274,6 +274,8 @@ struct drm_gem_object *virtgpu_gem_prime_import_sg_table(
 	struct drm_gem_object *obj;
 	struct virtio_gpu_mem_entry *ents;
 	unsigned int nents;
+	struct dma_buf *dmabuf;
+	struct virtio_gpu_cmd cmd_set;
 	int ret;
 
 	if (!vgdev->has_resource_blob || vgdev->has_virgl_3d) {
@@ -294,6 +296,13 @@ struct drm_gem_object *virtgpu_gem_prime_import_sg_table(
 	ret = virtio_gpu_sgt_to_mem_entry(vgdev, table, &ents, &nents);
 	if (ret != 0) {
 		goto err_put_id;
+	}
+
+	dmabuf = attach->dmabuf;
+	bo->protected = false;
+	if (dmabuf && dmabuf->exp_name &&
+		strcmp(dmabuf->exp_name, "i915_protected") == 0) {
+		bo->protected = true;
 	}
 
 	bo->guest_blob = true;
@@ -317,6 +326,14 @@ struct drm_gem_object *virtgpu_gem_prime_import_sg_table(
 
 	virtio_gpu_cmd_resource_create_blob(vgdev, bo, &params,
 					    ents, nents);
+	if (vgdev->has_protected_bo && bo->protected) {
+		cmd_set.cmd = VIRTIO_GPU_TUNNEL_CMD_SET_BO_PROTECTION;
+		cmd_set.size = 2;
+		cmd_set.data32[0] = bo->hw_res_handle;
+		cmd_set.data32[1] = bo->protected;
+		virtio_gpu_cmd_send_misc(vgdev, 0, 0, &cmd_set, 1);
+	}
+
 	virtio_gpu_object_save_restore_list(vgdev, bo, &params);
 
 	return obj;

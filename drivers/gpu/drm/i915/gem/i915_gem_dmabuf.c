@@ -218,9 +218,9 @@ struct dma_buf *i915_gem_prime_export(struct drm_gem_object *gem_obj, int flags)
 {
 	struct drm_i915_gem_object *obj = to_intel_bo(gem_obj);
 	DEFINE_DMA_BUF_EXPORT_INFO(exp_info);
-	if (i915_gem_object_is_protected(obj))
-		gem_obj->protected = true;
-
+	if (i915_gem_object_is_protected(obj)) {
+		exp_info.exp_name = "i915_protected";
+	}
 	exp_info.ops = &i915_dmabuf_ops;
 	exp_info.size = gem_obj->size;
 	exp_info.flags = flags;
