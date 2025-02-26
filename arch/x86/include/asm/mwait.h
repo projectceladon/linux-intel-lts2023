@@ -7,6 +7,7 @@
 
 #include <asm/cpufeature.h>
 #include <asm/nospec-branch.h>
+#include <asm/hypervisor.h>
 
 #define MWAIT_SUBSTATE_MASK		0xf
 #define MWAIT_CSTATE_MASK		0xf
@@ -18,6 +19,7 @@
 #define CPUID_MWAIT_LEAF		5
 #define CPUID5_ECX_EXTENSIONS_SUPPORTED 0x1
 #define CPUID5_ECX_INTERRUPT_BREAK	0x2
+#define CPUID5_ECX_MONITOR_LESS 0x4
 
 #define MWAIT_ECX_INTERRUPT_BREAK	0x1
 #define MWAITX_ECX_TIMER_ENABLE		BIT(1)
@@ -107,6 +109,8 @@ static __always_inline void __sti_mwait(unsigned long eax, unsigned long ecx)
  */
 static __always_inline void mwait_idle_with_hints(unsigned long eax, unsigned long ecx)
 {
+	bool has_monitor_less_mwait;
+
 	if (static_cpu_has_bug(X86_BUG_MONITOR) || !current_set_polling_and_test()) {
 		if (static_cpu_has_bug(X86_BUG_CLFLUSH_MONITOR)) {
 			mb();
@@ -114,9 +118,18 @@ static __always_inline void mwait_idle_with_hints(unsigned long eax, unsigned lo
 			mb();
 		}
 
+		has_monitor_less_mwait = ((cpuid_ecx(CPUID_MWAIT_LEAF) & CPUID5_ECX_MONITOR_LESS) != 0);
+		/* CPUID may cause vmexit, which we do not wish to see between monitor/mwait. */
+		mb();
+
 		__monitor((void *)&current_thread_info()->flags, 0, 0);
 
 		if (!need_resched()) {
+			if (!hypervisor_is_type(X86_HYPER_NATIVE) && has_monitor_less_mwait) {
+				current_clr_polling();
+				ecx |= 0x4;
+			}
+
 			if (ecx & 1) {
 				__mwait(eax, ecx);
 			} else {
