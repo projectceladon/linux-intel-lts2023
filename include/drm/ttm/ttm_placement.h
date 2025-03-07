@@ -63,6 +63,10 @@
 
 /* For multihop handling */
 #define TTM_PL_FLAG_TEMPORARY   (1 << 2)
+#define TTM_PL_FLAG_DESIRED	(1 << 3)
+
+/* Placement is only used during eviction */
+#define TTM_PL_FLAG_FALLBACK	(1 << 4)
 
 /**
  * struct ttm_place

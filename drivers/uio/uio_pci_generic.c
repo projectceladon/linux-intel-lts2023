@@ -212,11 +212,11 @@ static int release(struct uio_info *info, struct inode *inode)
 		vector_evt = &gdev->msix_info.vector_evts[i];
 		spin_lock(&vector_evt->list_lock);
 		list_for_each_entry_safe(evt_info, next, &vector_evt->evt_list_head, list) {
-			if (evt_info->user == user) {
+//			if (evt_info->user == user) {
 				list_del(&evt_info->list);
 				eventfd_ctx_put(evt_info->evt);
 				kfree(evt_info);
-			}
+//			}
 		}
 		spin_unlock(&vector_evt->list_lock);
 	}
