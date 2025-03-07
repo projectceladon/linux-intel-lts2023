@@ -764,4 +764,11 @@
 	INTEL_VGA_DEVICE(0x7DD1, info), \
 	INTEL_VGA_DEVICE(0x7DD5, info)
 
+#define INTEL_BMG_IDS(info) \
+	 INTEL_VGA_DEVICE(0xE20B, info) ,\
+	 INTEL_VGA_DEVICE(0xE20C, info) ,\
+	 INTEL_VGA_DEVICE(0xE20D, info) ,\
+	 INTEL_VGA_DEVICE(0xE212, info),  \
+	INTEL_VGA_DEVICE(0xE202, info)
+
 #endif /* _I915_PCIIDS_H */

@@ -80,14 +80,14 @@ static inline bool xe_vm_has_scratch(const struct xe_vm *vm)
  *
  * Return: Pointer to the embedding struct xe_vm.
  */
-static inline struct xe_vm *gpuvm_to_vm(struct drm_gpuvm *gpuvm)
+static inline struct xe_vm *gpuvm_to_vm(struct drm_gpuva_manager *gpuvm)
 {
 	return container_of(gpuvm, struct xe_vm, gpuvm);
 }
 
 static inline struct xe_vm *gpuva_to_vm(struct drm_gpuva *gpuva)
 {
-	return gpuvm_to_vm(gpuva->vm);
+	return gpuvm_to_vm(gpuva->mgr);
 }
 
 static inline struct xe_vma *gpuva_to_vma(struct drm_gpuva *gpuva)
@@ -132,7 +132,7 @@ static inline struct xe_bo *xe_vma_bo(struct xe_vma *vma)
 
 static inline struct xe_vm *xe_vma_vm(struct xe_vma *vma)
 {
-	return container_of(vma->gpuva.vm, struct xe_vm, gpuvm);
+	return container_of(vma->gpuva.mgr, struct xe_vm, gpuvm);
 }
 
 static inline bool xe_vma_read_only(struct xe_vma *vma)

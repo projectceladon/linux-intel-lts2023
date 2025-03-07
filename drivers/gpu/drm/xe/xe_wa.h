@@ -7,6 +7,7 @@
 #define _XE_WA_
 
 #include "xe_assert.h"
+#include "generated/xe_wa_oob.h"
 
 struct drm_printer;
 struct xe_gt;

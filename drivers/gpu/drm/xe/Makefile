@@ -148,140 +148,135 @@ ifdef CONFIG_DRM_XE_KUNIT_TEST
 xe-y += tests/xe_kunit_helpers.o
 endif
 
+#subdir-ccflags-$(CONFIG_DRM_XE_DISPLAY) += \
+
 # i915 Display compat #defines and #includes
+
 subdir-ccflags-$(CONFIG_DRM_XE_DISPLAY) += \
-	-I$(src)/display/ext \
-	-I$(src)/compat-i915-headers \
-	-I$(srctree)/drivers/gpu/drm/i915/display/ \
+	-I$(srctree)/$(src)/compat-i915-headers \
+	-I$(srctree)/$(src)/display/ext \
+	-I$(srctree)/$(src)/drivers/gpu/drm/xe/display/ \
+	-Ddrm_i915_gem_object=xe_bo \
 	-Ddrm_i915_private=xe_device
 
-# Rule to build SOC code shared with i915
-$(obj)/i915-soc/%.o: $(srctree)/drivers/gpu/drm/i915/soc/%.c FORCE
-	$(call cmd,force_checksrc)
-	$(call if_changed_rule,cc_o_c)
+subdir-ccflags-$(CONFIG_DRM_XE_DISPLAY) += \
+	-Ddrm_i915_gem_object=xe_bo \
+	-Ddrm_i915_private=xe_device
 
 # Rule to build display code shared with i915
-$(obj)/i915-display/%.o: $(srctree)/drivers/gpu/drm/i915/display/%.c FORCE
-	$(call cmd,force_checksrc)
-	$(call if_changed_rule,cc_o_c)
+#$(obj)/i915-display/%.o: $(srctree)/drivers/gpu/drm/i915/display/%.c FORCE
+#	$(call cmd,force_checksrc)
+#	$(call if_changed_rule,cc_o_c)
 
 # Display code specific to xe
 xe-$(CONFIG_DRM_XE_DISPLAY) += \
 	display/ext/i915_irq.o \
 	display/ext/i915_utils.o \
 	display/intel_bo.o \
-	display/intel_fb_bo.o \
-	display/intel_fbdev_fb.o \
+	display/intel_fb.o \
+	display/intel_display_power.o \
 	display/xe_display.o \
 	display/xe_display_misc.o \
 	display/xe_display_rps.o \
 	display/xe_display_wa.o \
-	display/xe_dsb_buffer.o \
 	display/xe_fb_pin.o \
 	display/xe_hdcp_gsc.o \
 	display/xe_plane_initial.o \
-	display/xe_tdf.o
+	display/xe_tdf.o \
+	display/icl_dsi.o \
+	display/intel_atomic.o \
+	display/intel_atomic_plane.o \
+	display/intel_audio.o \
+	display/intel_backlight.o \
+	display/intel_bios.o \
+	display/intel_bw.o \
+	display/intel_cdclk.o \
+	display/intel_color.o \
+	display/intel_combo_phy.o \
+	display/intel_connector.o \
+	display/intel_crtc.o \
+	display/intel_crtc_state_dump.o \
+	display/intel_cursor.o \
+	display/intel_cx0_phy.o \
+	display/intel_ddi.o \
+	display/intel_ddi_buf_trans.o \
+	display/intel_display.o \
+	display/intel_display_conversion.o \
+	display/intel_display_device.o \
+	display/intel_display_driver.o \
+	display/intel_display_irq.o \
+	display/intel_display_params.o \
+	display/intel_display_power.o \
+	display/intel_display_power_map.o \
+	display/intel_display_power_well.o \
+	display/intel_display_trace.o \
+	display/intel_display_wa.o \
+	display/intel_dkl_phy.o \
+	display/intel_dmc.o \
+	display/intel_dp.o \
+	display/intel_dp_aux.o \
+	display/intel_dp_aux_backlight.o \
+	display/intel_dp_hdcp.o \
+	display/intel_dp_link_training.o \
+	display/intel_dp_mst.o \
+	display/intel_dpll.o \
+	display/intel_dpll_mgr.o \
+	display/intel_dpt_common.o \
+	display/intel_drrs.o \
+	display/intel_dsb.o \
+	display/intel_dsi.o \
+	display/intel_dsi_dcs_backlight.o \
+	display/intel_dsi_vbt.o \
+	display/intel_fb.o \
+	display/intel_fbc.o \
+	display/intel_fdi.o \
+	display/intel_fifo_underrun.o \
+	display/intel_frontbuffer.o \
+	display/intel_global_state.o \
+	display/intel_gmbus.o \
+	display/intel_hdcp.o \
+	display/intel_hdmi.o \
+	display/intel_hotplug.o \
+	display/intel_hotplug_irq.o \
+	display/intel_hti.o \
+	display/intel_link_bw.o \
+	display/intel_lspcon.o \
+	display/intel_modeset_lock.o \
+	display/intel_modeset_setup.o \
+	display/intel_modeset_verify.o \
+	display/intel_panel.o \
+	display/intel_pmdemand.o \
+	display/intel_pps.o \
+	display/intel_psr.o \
+	display/intel_qp_tables.o \
+	display/intel_quirks.o \
+	display/intel_snps_phy.o \
+	display/intel_tc.o \
+	display/intel_vblank.o \
+	display/intel_vdsc.o \
+	display/intel_vga.o \
+	display/intel_vrr.o \
+	display/intel_wm.o \
+	display/skl_scaler.o \
+	display/skl_universal_plane.o \
+	display/intel_link_bw.o \
+	display/intel_fbdev.o \
+	display/skl_watermark.o
 
 # SOC code shared with i915
 xe-$(CONFIG_DRM_XE_DISPLAY) += \
-	i915-soc/intel_dram.o \
-	i915-soc/intel_pch.o \
-	i915-soc/intel_rom.o
-
-# Display code shared with i915
-xe-$(CONFIG_DRM_XE_DISPLAY) += \
-	i915-display/icl_dsi.o \
-	i915-display/intel_alpm.o \
-	i915-display/intel_atomic.o \
-	i915-display/intel_atomic_plane.o \
-	i915-display/intel_audio.o \
-	i915-display/intel_backlight.o \
-	i915-display/intel_bios.o \
-	i915-display/intel_bw.o \
-	i915-display/intel_cdclk.o \
-	i915-display/intel_color.o \
-	i915-display/intel_combo_phy.o \
-	i915-display/intel_connector.o \
-	i915-display/intel_crtc.o \
-	i915-display/intel_crtc_state_dump.o \
-	i915-display/intel_cursor.o \
-	i915-display/intel_cx0_phy.o \
-	i915-display/intel_ddi.o \
-	i915-display/intel_ddi_buf_trans.o \
-	i915-display/intel_display.o \
-	i915-display/intel_display_conversion.o \
-	i915-display/intel_display_device.o \
-	i915-display/intel_display_driver.o \
-	i915-display/intel_display_irq.o \
-	i915-display/intel_display_params.o \
-	i915-display/intel_display_power.o \
-	i915-display/intel_display_power_map.o \
-	i915-display/intel_display_power_well.o \
-	i915-display/intel_display_trace.o \
-	i915-display/intel_display_wa.o \
-	i915-display/intel_dkl_phy.o \
-	i915-display/intel_dmc.o \
-	i915-display/intel_dp.o \
-	i915-display/intel_dp_aux.o \
-	i915-display/intel_dp_aux_backlight.o \
-	i915-display/intel_dp_hdcp.o \
-	i915-display/intel_dp_link_training.o \
-	i915-display/intel_dp_mst.o \
-	i915-display/intel_dp_test.o \
-	i915-display/intel_dpll.o \
-	i915-display/intel_dpll_mgr.o \
-	i915-display/intel_dpt_common.o \
-	i915-display/intel_drrs.o \
-	i915-display/intel_dsb.o \
-	i915-display/intel_dsi.o \
-	i915-display/intel_dsi_dcs_backlight.o \
-	i915-display/intel_dsi_vbt.o \
-	i915-display/intel_encoder.o \
-	i915-display/intel_fb.o \
-	i915-display/intel_fbc.o \
-	i915-display/intel_fdi.o \
-	i915-display/intel_fifo_underrun.o \
-	i915-display/intel_frontbuffer.o \
-	i915-display/intel_global_state.o \
-	i915-display/intel_gmbus.o \
-	i915-display/intel_hdcp.o \
-	i915-display/intel_hdcp_gsc_message.o \
-	i915-display/intel_hdmi.o \
-	i915-display/intel_hotplug.o \
-	i915-display/intel_hotplug_irq.o \
-	i915-display/intel_hti.o \
-	i915-display/intel_link_bw.o \
-	i915-display/intel_lspcon.o \
-	i915-display/intel_modeset_lock.o \
-	i915-display/intel_modeset_setup.o \
-	i915-display/intel_modeset_verify.o \
-	i915-display/intel_panel.o \
-	i915-display/intel_pfit.o \
-	i915-display/intel_pmdemand.o \
-	i915-display/intel_pps.o \
-	i915-display/intel_psr.o \
-	i915-display/intel_qp_tables.o \
-	i915-display/intel_quirks.o \
-	i915-display/intel_snps_phy.o \
-	i915-display/intel_tc.o \
-	i915-display/intel_vblank.o \
-	i915-display/intel_vdsc.o \
-	i915-display/intel_vga.o \
-	i915-display/intel_vrr.o \
-	i915-display/intel_dmc_wl.o \
-	i915-display/intel_wm.o \
-	i915-display/skl_scaler.o \
-	i915-display/skl_universal_plane.o \
-	i915-display/skl_watermark.o
+	soc/intel_dram.o \
+	soc/intel_pch.o \
+	soc/intel_rom.o
 
 ifeq ($(CONFIG_ACPI),y)
 	xe-$(CONFIG_DRM_XE_DISPLAY) += \
-		i915-display/intel_acpi.o \
-		i915-display/intel_opregion.o
+		display/intel_acpi.o \
+		display/intel_opregion.o
 endif
 
 ifeq ($(CONFIG_DRM_FBDEV_EMULATION),y)
-	xe-$(CONFIG_DRM_XE_DISPLAY) += i915-display/intel_fbdev.o
+	xe-$(CONFIG_DRM_XE_DISPLAY) += display/intel_fbdev.o
 endif
 
 ifeq ($(CONFIG_DEBUG_FS),y)
@@ -296,9 +291,8 @@ ifeq ($(CONFIG_DEBUG_FS),y)
 	xe-$(CONFIG_PCI_IOV) += xe_gt_sriov_pf_debugfs.o
 
 	xe-$(CONFIG_DRM_XE_DISPLAY) += \
-		i915-display/intel_display_debugfs.o \
-		i915-display/intel_display_debugfs_params.o \
-		i915-display/intel_pipe_crc.o
+		display/intel_display_debugfs.o \
+		display/intel_pipe_crc.o
 endif
 
 obj-$(CONFIG_DRM_XE) += xe.o
