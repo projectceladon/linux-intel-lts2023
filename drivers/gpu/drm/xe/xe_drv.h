@@ -10,6 +10,7 @@
 
 #define DRIVER_NAME		"xe"
 #define DRIVER_DESC		"Intel Xe Graphics"
+#define DRIVER_DATE		"20250210"
 
 /* Interface history:
  *

@@ -27,8 +27,9 @@
 #include "xe_vm.h"
 #endif
 
-DECLARE_FAULT_ATTR(gt_reset_failure);
-
+#ifdef CONFIG_FAULT_INJECTION
+ DECLARE_FAULT_ATTR(gt_reset_failure);
+#endif
 static struct xe_device *node_to_xe(struct drm_info_node *node)
 {
 	return to_xe_device(node->minor->dev);
@@ -230,5 +231,7 @@ void xe_debugfs_register(struct xe_device *xe)
 	for_each_gt(gt, xe, id)
 		xe_gt_debugfs_register(gt);
 
+#ifdef CONFIG_FAULT_INJECTION
 	fault_create_debugfs_attr("fail_gt_reset", root, &gt_reset_failure);
+#endif
 }

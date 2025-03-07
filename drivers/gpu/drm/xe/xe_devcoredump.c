@@ -293,7 +293,7 @@ static void devcoredump_snapshot(struct xe_devcoredump *coredump,
 		ss->pid = q->vm->xef->pid;
 	}
 
-	strscpy(ss->process_name, process_name);
+	strscpy(ss->process_name, process_name, sizeof(process_name));
 
 	ss->gt = q->gt;
 	INIT_WORK(&ss->work, xe_devcoredump_deferred_snap_work);

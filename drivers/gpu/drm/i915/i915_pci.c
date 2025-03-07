@@ -1027,6 +1027,7 @@ static bool intel_mmio_bar_valid(struct pci_dev *pdev, struct intel_device_info 
 	return i915_pci_resource_valid(pdev, intel_mmio_bar(intel_info->__runtime.graphics.ip.ver));
 }
 
+#if 0
 extern int gfx_load_module(void *buf, int len, const char *kargs);
 
 static void gfx_out_of_tree_load(struct device *dev)
@@ -1066,6 +1067,7 @@ static void gfx_out_of_tree_load(struct device *dev)
 	DRM_INFO("i915_ag loaded\n");
 }
 
+#endif
 static int i915_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	struct intel_device_info *intel_info =
@@ -1215,7 +1217,7 @@ int i915_pci_register_driver(void)
 {
 	int ret;
 	ret = pci_register_driver(&i915_pci_driver);
-	gfx_out_of_tree_load(NULL);
+//	gfx_out_of_tree_load(NULL);
 	return ret;
 }
 
