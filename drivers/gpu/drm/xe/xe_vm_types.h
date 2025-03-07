@@ -6,7 +6,7 @@
 #ifndef _XE_VM_TYPES_H_
 #define _XE_VM_TYPES_H_
 
-#include <drm/drm_gpuvm.h>
+#include <drm/drm_gpuva_mgr.h>
 
 #include <linux/dma-resv.h>
 #include <linux/kref.h>
@@ -137,7 +137,7 @@ struct xe_device;
 
 struct xe_vm {
 	/** @gpuvm: base GPUVM used to track VMAs */
-	struct drm_gpuvm gpuvm;
+	struct drm_gpuva_manager gpuvm;
 
 	struct xe_device *xe;
 

@@ -9,7 +9,7 @@
 #include <linux/build_bug.h>
 #include <linux/mutex.h>
 #include <linux/types.h>
-#include <linux/workqueue_types.h>
+#include <linux/workqueue.h>
 
 /**
  * VFID - Virtual Function Identifier

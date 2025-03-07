@@ -233,7 +233,7 @@ xe_gt_topology_init(struct xe_gt *gt)
 	load_eu_mask(gt, gt->fuse_topo.eu_mask_per_dss, &gt->fuse_topo.eu_type);
 	load_l3_bank_mask(gt, gt->fuse_topo.l3_bank_mask);
 
-	p = drm_dbg_printer(&gt_to_xe(gt)->drm, DRM_UT_DRIVER, "GT topology");
+	p = drm_debug_printer("GT topology");
 
 	xe_gt_topology_dump(gt, &p);
 }

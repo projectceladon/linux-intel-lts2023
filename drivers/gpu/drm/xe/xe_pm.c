@@ -524,16 +524,16 @@ static void xe_pm_runtime_lockdep_prime(void)
  * xe_pm_runtime_get - Get a runtime_pm reference and resume synchronously
  * @xe: xe device instance
  */
-void xe_pm_runtime_get(struct xe_device *xe)
+int xe_pm_runtime_get(struct xe_device *xe)
 {
 	trace_xe_pm_runtime_get(xe, __builtin_return_address(0));
 	pm_runtime_get_noresume(xe->drm.dev);
 
 	if (xe_pm_read_callback_task(xe) == current)
-		return;
+		return 0;
 
 	xe_rpm_might_enter_cb(xe);
-	pm_runtime_resume(xe->drm.dev);
+	return pm_runtime_resume(xe->drm.dev);
 }
 
 /**
@@ -577,7 +577,7 @@ int xe_pm_runtime_get_ioctl(struct xe_device *xe)
  */
 bool xe_pm_runtime_get_if_active(struct xe_device *xe)
 {
-	return pm_runtime_get_if_active(xe->drm.dev) > 0;
+	return pm_runtime_get_if_active(xe->drm.dev, true) > 0;
 }
 
 /**

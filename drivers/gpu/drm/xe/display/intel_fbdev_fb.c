@@ -7,7 +7,6 @@
 
 #include "intel_display_types.h"
 #include "intel_fb.h"
-#include "intel_fbdev_fb.h"
 #include "xe_bo.h"
 #include "xe_ttm_stolen_mgr.h"
 #include "xe_wa.h"
@@ -65,7 +64,7 @@ struct intel_framebuffer *intel_fbdev_fb_alloc(struct drm_fb_helper *helper,
 		goto err;
 	}
 
-	fb = intel_framebuffer_create(&obj->ttm.base, &mode_cmd);
+	fb = intel_framebuffer_create_xe(&obj->ttm.base, &mode_cmd);
 	if (IS_ERR(fb)) {
 		xe_bo_unpin_map_no_vm(obj);
 		goto err;

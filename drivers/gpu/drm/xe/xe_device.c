@@ -245,7 +245,6 @@ static const struct file_operations xe_driver_fops = {
 #ifdef CONFIG_PROC_FS
 	.show_fdinfo = drm_show_fdinfo,
 #endif
-	.fop_flags = FOP_UNSIGNED_OFFSET,
 };
 
 static struct drm_driver driver = {
@@ -273,6 +272,7 @@ static struct drm_driver driver = {
 	.desc = DRIVER_DESC,
 	.major = DRIVER_MAJOR,
 	.minor = DRIVER_MINOR,
+	.date = DRIVER_DATE,
 	.patchlevel = DRIVER_PATCHLEVEL,
 };
 
