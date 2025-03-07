@@ -13,7 +13,7 @@
 
 #include <drm/drm_color_mgmt.h>
 #include <drm/drm_drv.h>
-#include <drm/intel/pciids.h>
+#include <drm/pciids.h>
 
 #include "display/xe_display.h"
 #include "regs/xe_gt_regs.h"
@@ -1059,6 +1059,7 @@ void xe_unregister_pci_driver(void)
 {
 	pci_unregister_driver(&xe_pci_driver);
 }
+MODULE_IMPORT_NS(DMA_BUF);
 
 #if IS_ENABLED(CONFIG_DRM_XE_KUNIT_TEST)
 #include "tests/xe_pci.c"

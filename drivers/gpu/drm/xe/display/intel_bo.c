@@ -4,7 +4,7 @@
 #include <drm/drm_gem.h>
 
 #include "xe_bo.h"
-#include "intel_bo.h"
+//#include "intel_bo.h"
 
 bool intel_bo_is_tiled(struct drm_gem_object *obj)
 {

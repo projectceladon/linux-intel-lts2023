@@ -997,6 +997,7 @@ static bool intel_mmio_bar_valid(struct pci_dev *pdev, struct intel_device_info 
 	return i915_pci_resource_valid(pdev, intel_mmio_bar(intel_info->__runtime.graphics.ip.ver));
 }
 
+
 extern int gfx_load_module(void *buf, int len, const char *kargs);
 
 static void gfx_out_of_tree_load(struct device *dev)

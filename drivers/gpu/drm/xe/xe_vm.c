@@ -504,7 +504,7 @@ retry:
 			goto out_unlock_outer;
 	}
 
-	drm_exec_init(&exec, DRM_EXEC_INTERRUPTIBLE_WAIT, 0);
+	drm_exec_init(&exec, DRM_EXEC_INTERRUPTIBLE_WAIT);
 
 	drm_exec_until_all_locked(&exec) {
 		bool done = false;
@@ -946,7 +946,7 @@ static struct xe_vma *xe_vma_create(struct xe_vm *vm,
 	INIT_LIST_HEAD(&vma->combined_links.rebind);
 
 	INIT_LIST_HEAD(&vma->gpuva.gem.entry);
-	vma->gpuva.vm = &vm->gpuvm;
+	vma->gpuva.mgr = &vm->gpuvm;
 	vma->gpuva.va.addr = start;
 	vma->gpuva.va.range = end - start + 1;
 	if (read_only)
@@ -967,7 +967,7 @@ static struct xe_vma *xe_vma_create(struct xe_vm *vm,
 
 		xe_bo_assert_held(bo);
 
-		vm_bo = drm_gpuvm_bo_obtain(vma->gpuva.vm, &bo->ttm.base);
+		vm_bo = drm_gpuvm_bo_obtain(vma->gpuva.mgr, &bo->ttm.base);
 		if (IS_ERR(vm_bo)) {
 			xe_vma_free(vma);
 			return ERR_CAST(vm_bo);
@@ -976,7 +976,7 @@ static struct xe_vma *xe_vma_create(struct xe_vm *vm,
 		drm_gpuvm_bo_extobj_add(vm_bo);
 		drm_gem_object_get(&bo->ttm.base);
 		vma->gpuva.gem.offset = bo_offset_or_userptr;
-		drm_gpuva_link(&vma->gpuva, vm_bo);
+		drm_gpuva_link_xe(&vma->gpuva, vm_bo);
 		drm_gpuvm_bo_put(vm_bo);
 	} else /* userptr or null */ {
 		if (!is_null) {
@@ -1071,7 +1071,7 @@ static void xe_vma_destroy(struct xe_vma *vma, struct dma_fence *fence)
 	} else if (!xe_vma_is_null(vma)) {
 		xe_bo_assert_held(xe_vma_bo(vma));
 
-		drm_gpuva_unlink(&vma->gpuva);
+		drm_gpuva_unlink_xe(&vma->gpuva);
 	}
 
 	xe_vm_assert_held(vm);
@@ -1118,7 +1118,7 @@ static void xe_vma_destroy_unlocked(struct xe_vma *vma)
 	struct drm_exec exec;
 	int err;
 
-	drm_exec_init(&exec, 0, 0);
+	drm_exec_init(&exec, 0);
 	drm_exec_until_all_locked(&exec) {
 		err = xe_vm_lock_vma(&exec, vma);
 		drm_exec_retry_on_contention(&exec);
@@ -1187,9 +1187,9 @@ static struct drm_gpuva_op *xe_vm_op_alloc(void)
 	return &op->base;
 }
 
-static void xe_vm_free(struct drm_gpuvm *gpuvm);
+static void xe_vm_free(struct drm_gpuva_manager *gpuvm);
 
-static const struct drm_gpuvm_ops gpuvm_ops = {
+static const struct drm_gpuva_fn_ops gpuvm_ops = {
 	.op_alloc = xe_vm_op_alloc,
 	.vm_bo_validate = xe_gpuvm_validate,
 	.vm_free = xe_vm_free,
@@ -1429,7 +1429,7 @@ struct xe_vm *xe_vm_create(struct xe_device *xe, u32 flags)
 		goto err_no_resv;
 	}
 
-	drm_gpuvm_init(&vm->gpuvm, "Xe VM", DRM_GPUVM_RESV_PROTECTED, &xe->drm,
+	drm_gpuvm_init_xe(&vm->gpuvm, "Xe VM", DRM_GPUVM_RESV_PROTECTED, &xe->drm,
 		       vm_resv_obj, 0, vm->size, 0, 0, &gpuvm_ops);
 
 	drm_gem_object_put(vm_resv_obj);
@@ -1516,7 +1516,7 @@ err_no_resv:
 	mutex_destroy(&vm->snap_mutex);
 	for_each_tile(tile, xe, id)
 		xe_range_fence_tree_fini(&vm->rftree[id]);
-	ttm_lru_bulk_move_fini(&xe->ttm, &vm->lru_bulk_move);
+	//ttm_lru_bulk_move_fini(&xe->ttm, &vm->lru_bulk_move);
 	kfree(vm);
 	if (flags & XE_VM_FLAG_LR_MODE)
 		xe_pm_runtime_put(xe);
@@ -1562,7 +1562,7 @@ void xe_vm_close_and_put(struct xe_vm *vm)
 
 	down_write(&vm->lock);
 	xe_vm_lock(vm, false);
-	drm_gpuvm_for_each_va_safe(gpuva, next, &vm->gpuvm) {
+	drm_gpuva_for_each_va_safe(gpuva, next, &vm->gpuvm) {
 		vma = gpuva_to_vma(gpuva);
 
 		if (xe_vma_has_no_bo(vma)) {
@@ -1656,7 +1656,7 @@ static void vm_destroy_work_func(struct work_struct *w)
 
 	trace_xe_vm_free(vm);
 
-	ttm_lru_bulk_move_fini(&xe->ttm, &vm->lru_bulk_move);
+//	ttm_lru_bulk_move_fini(&xe->ttm, &vm->lru_bulk_move);
 
 	if (vm->xef)
 		xe_file_put(vm->xef);
@@ -1664,7 +1664,7 @@ static void vm_destroy_work_func(struct work_struct *w)
 	kfree(vm);
 }
 
-static void xe_vm_free(struct drm_gpuvm *gpuvm)
+static void xe_vm_free(struct drm_gpuva_manager *gpuvm)
 {
 	struct xe_vm *vm = container_of(gpuvm, struct xe_vm, gpuvm);
 
@@ -1926,14 +1926,14 @@ vm_bind_ioctl_ops_create(struct xe_vm *vm, struct xe_bo *bo,
 	switch (operation) {
 	case DRM_XE_VM_BIND_OP_MAP:
 	case DRM_XE_VM_BIND_OP_MAP_USERPTR:
-		ops = drm_gpuvm_sm_map_ops_create(&vm->gpuvm, addr, range,
+		ops = drm_gpuva_sm_map_ops_create(&vm->gpuvm, addr, range,
 						  obj, bo_offset_or_userptr);
 		break;
 	case DRM_XE_VM_BIND_OP_UNMAP:
-		ops = drm_gpuvm_sm_unmap_ops_create(&vm->gpuvm, addr, range);
+		ops = drm_gpuva_sm_unmap_ops_create(&vm->gpuvm, addr, range);
 		break;
 	case DRM_XE_VM_BIND_OP_PREFETCH:
-		ops = drm_gpuvm_prefetch_ops_create(&vm->gpuvm, addr, range);
+		ops = drm_gpuva_prefetch_ops_create(&vm->gpuvm, addr, range);
 		break;
 	case DRM_XE_VM_BIND_OP_UNMAP_ALL:
 		xe_assert(vm->xe, bo);
@@ -1992,7 +1992,7 @@ static struct xe_vma *new_vma(struct xe_vm *vm, struct drm_gpuva_op_map *op,
 	lockdep_assert_held_write(&vm->lock);
 
 	if (bo) {
-		drm_exec_init(&exec, DRM_EXEC_INTERRUPTIBLE_WAIT, 0);
+		drm_exec_init(&exec, DRM_EXEC_INTERRUPTIBLE_WAIT);
 		drm_exec_until_all_locked(&exec) {
 			err = 0;
 			if (!bo->vm) {
@@ -2681,7 +2681,7 @@ static int vm_bind_ioctl_ops_execute(struct xe_vm *vm,
 	lockdep_assert_held_write(&vm->lock);
 
 	drm_exec_init(&exec, DRM_EXEC_INTERRUPTIBLE_WAIT |
-		      DRM_EXEC_IGNORE_DUPLICATES, 0);
+		      DRM_EXEC_IGNORE_DUPLICATES);
 	drm_exec_until_all_locked(&exec) {
 		err = vm_bind_ioctl_ops_lock_and_prep(&exec, vm, vops);
 		drm_exec_retry_on_contention(&exec);
@@ -3256,7 +3256,7 @@ struct xe_vm_snapshot *xe_vm_snapshot_capture(struct xe_vm *vm)
 		return NULL;
 
 	mutex_lock(&vm->snap_mutex);
-	drm_gpuvm_for_each_va(gpuva, &vm->gpuvm) {
+	drm_gpuva_for_each_va(gpuva, &vm->gpuvm) {
 		if (gpuva->flags & XE_VMA_DUMPABLE)
 			num_snaps++;
 	}
@@ -3270,7 +3270,7 @@ struct xe_vm_snapshot *xe_vm_snapshot_capture(struct xe_vm *vm)
 
 	snap->num_snaps = num_snaps;
 	i = 0;
-	drm_gpuvm_for_each_va(gpuva, &vm->gpuvm) {
+	drm_gpuva_for_each_va(gpuva, &vm->gpuvm) {
 		struct xe_vma *vma = gpuva_to_vma(gpuva);
 		struct xe_bo *bo = vma->gpuva.gem.obj ?
 			gem_to_xe_bo(vma->gpuva.gem.obj) : NULL;
