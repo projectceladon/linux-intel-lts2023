@@ -45,7 +45,7 @@ static int ivshmem_init_msix(struct ivshm_ivshmem_dev *idev)
 	int err;
 
 	nvecs = pci_msix_vec_count(idev->pdev);
-	if (!nvecs)
+	if (nvecs <= 0)
 		return -EINVAL;
 
 	idev->msix_entries = devm_kcalloc(&idev->pdev->dev, nvecs,
@@ -114,6 +114,10 @@ static int probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	len = pci_resource_len(pdev, IVSHMEM_MEM_BAR);
 	idev->info.dev_mmio = start;
 	idev->info.dev_mmio_len = len;
+	
+	if(pci_msix_vec_count(pdev) < 0)
+		return -EINVAL;
+
 	err = ivshm_register_region(idev->info.ivshm_dev, "default", start, len,
 		pci_msix_vec_count(pdev), &iregion);
 	if (err) {

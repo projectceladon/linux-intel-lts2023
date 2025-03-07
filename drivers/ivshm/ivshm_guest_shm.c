@@ -27,7 +27,7 @@ static irqreturn_t guest_shm_irq_handler(int irq, void *arg)
 {
 	struct ivshm_guest_shm_dev *idev = (struct ivshm_guest_shm_dev *)arg;
 	irqreturn_t ret = IRQ_NONE;
-	int i;
+	int i = 0;
 
 	if (idev->irq == irq) {
 		/* Check the status ? Only when status == (1 << id) needs handle */
