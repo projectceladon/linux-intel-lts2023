@@ -42,4 +42,26 @@ static inline const char *str_yes_no(bool v)
 	return v ? "yes" : "no";
 }
 
+#define str_no_yes(v)		str_yes_no(!(v))
+
+static inline const char *str_up_down(bool v)
+{
+	return v ? "up" : "down";
+}
+#define str_down_up(v)		str_up_down(!(v))
+
+static inline const char *str_true_false(bool v)
+{
+	return v ? "true" : "false";
+}
+#define str_false_true(v)		str_true_false(!(v))
+#define str_disable_enable(v)		str_enable_disable(!(v))
+#define str_disabled_enabled(v)		str_enabled_disabled(!(v))
+#define str_off_on(v)		str_on_off(!(v))
+
+
+static inline const char *str_plural(size_t num)
+{
+        return num == 1 ? "" : "s";
+}
 #endif

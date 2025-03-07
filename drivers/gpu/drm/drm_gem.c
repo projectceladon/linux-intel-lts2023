@@ -629,6 +629,7 @@ void drm_gem_put_pages(struct drm_gem_object *obj, struct page **pages,
 	int i, npages;
 	struct address_space *mapping;
 	struct folio_batch fbatch;
+	bool  obj_abnormal = false;
 
 	mapping = file_inode(obj->filp)->i_mapping;
 	mapping_clear_unevictable(mapping);
@@ -641,8 +642,18 @@ void drm_gem_put_pages(struct drm_gem_object *obj, struct page **pages,
 
 	npages = obj->size >> PAGE_SHIFT;
 
-	if (strcmp(obj->dev->dev->driver->name, "virtio-ivshmem") == 0 ||
-		strcmp(obj->dev->dev->driver->name, "virtio-guest-shm") == 0) {
+	if (!obj->dev) {
+		obj_abnormal = true;
+	}
+	if (!obj->dev->dev) {
+		obj_abnormal = true;
+	}
+	if (!obj->dev->dev->driver) {
+		obj_abnormal = true;
+	}
+
+	if ( !obj_abnormal && (strcmp(obj->dev->dev->driver->name, "virtio-ivshmem") == 0 ||
+		strcmp(obj->dev->dev->driver->name, "virtio-guest-shm") == 0)) {
 		for (i = 0; i < npages; i++) {
 			if (!pages[i])
 				continue;

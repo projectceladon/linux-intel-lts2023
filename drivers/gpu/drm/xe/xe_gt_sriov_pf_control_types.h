@@ -8,7 +8,7 @@
 
 #include <linux/completion.h>
 #include <linux/spinlock.h>
-#include <linux/workqueue_types.h>
+#include <linux/workqueue.h>
 
 /**
  * enum xe_gt_sriov_control_bits - Various bits used by the PF to represent a VF state

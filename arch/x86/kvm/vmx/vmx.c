@@ -48,6 +48,7 @@
 #include <asm/mwait.h>
 #include <asm/spec-ctrl.h>
 #include <asm/vmx.h>
+#include <asm/hypervisor.h>
 
 #include "capabilities.h"
 #include "cpuid.h"
