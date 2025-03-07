@@ -643,10 +643,12 @@ static void xe_irq_postinstall(struct xe_device *xe)
 			  GU_MISC_IRQ_OFFSET, GU_MISC_GSE);
 
 	/* Enable top-level interrupts */
-	if (GRAPHICS_VERx100(xe) >= 1210)
+	if (GRAPHICS_VERx100(xe) >= 1210) {
 		dg1_intr_enable(xe, true);
-	else
+	}
+	else {
 		xelp_intr_enable(xe, true);
+	}
 }
 
 static irqreturn_t vf_mem_irq_handler(int irq, void *arg)

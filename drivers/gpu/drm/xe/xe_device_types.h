@@ -28,8 +28,8 @@
 
 #if IS_ENABLED(CONFIG_DRM_XE_DISPLAY)
 #include "soc/intel_pch.h"
-#include "intel_display_core.h"
-#include "intel_display_device.h"
+#include "display/intel_display_core.h"
+#include "display/intel_display_device.h"
 #endif
 
 struct xe_ggtt;
@@ -572,10 +572,17 @@ struct xe_device {
 
 	/* To shut up runtime pm macros.. */
 	struct xe_runtime_pm {} runtime_pm;
-
+	bool display_irqs_enabled;
+	u32 enabled_irq_mask;
+	u32 skl_preferred_vco_freq, max_dotclk_freq;
 	/* only to allow build, not used functionally */
-	u32 irq_mask;
+	union {
+		u32 irq_mask;
+		u32 de_irq_mask[I915_MAX_PIPES];
+	};
 
+	u8 vblank_enabled;
+	u32 pipestat_irq_mask[I915_MAX_PIPES];
 	struct intel_uncore {
 		spinlock_t lock;
 	} uncore;
@@ -587,6 +594,30 @@ struct xe_device {
 		unsigned int fsb_freq, mem_freq, is_ddr3;
 	};
 
+	struct {
+		/* Backlight: XXX: needs to be set to -1 */
+		s32 invert_brightness;
+		s32 vbt_sdvo_panel_type;
+		u32 edp_vswing;
+
+		/* PM support, needs to be -1 as well */
+		s32 disable_power_well;
+		s32 enable_dc;
+
+		const char *dmc_firmware_path;
+		s32 enable_dpcd_backlight;
+		s32 enable_dp_mst;
+		bool enable_dpt;
+		s32 enable_fbc;
+		s32 enable_psr;
+		bool enable_sagv;
+		bool psr_safest_params;
+		s32 enable_psr2_sel_fetch;
+
+		s32 panel_use_ssc;
+		const char *vbt_firmware;
+		u32 lvds_channel_mode;
+	} params;
 	void *pxp;
 #endif
 };
