@@ -68,7 +68,10 @@ static DEFINE_SEMAPHORE(optee_smc_lock);
 
 #define OPTEE_SHM_SMC_SIZE	0x200000
 
-#define PCI_DEVICE_ID_INTEL0	0x1
+#define PCI_DEVICE_ID_OPTEE0	0x1
+#define PCI_DEVICE_ID_OPTEE1	0x2
+#define PCI_DEVICE_ID_OPTEE2	0x3
+#define PCI_DEVICE_ID_OPTEE3	0x4
 
 /* QNX tee shm size in pages*/
 #define QNX_TEE_SHM_SIZE		0x500
@@ -101,11 +104,23 @@ struct ivshmem_private {
 static struct ivshmem_private g_ivshmem_dev;
 
 static struct pci_device_id ivshmem_id_table[] = {
-    { PCI_DEVICE_SUB(PCI_VENDOR_ID_REDHAT_QUMRANET,
+	{ PCI_DEVICE_SUB(PCI_VENDOR_ID_REDHAT_QUMRANET,
 		     0x1110,   // the device id of IVSHMEM PCI device
 		     PCI_VENDOR_ID_INTEL,
-		     PCI_DEVICE_ID_INTEL0) },
-    { 0 },
+		     PCI_DEVICE_ID_OPTEE0) },
+	{ PCI_DEVICE_SUB(PCI_VENDOR_ID_REDHAT_QUMRANET,
+		     0x1110,   // the device id of IVSHMEM PCI device
+		     PCI_VENDOR_ID_INTEL,
+		     PCI_DEVICE_ID_OPTEE1) },
+	{ PCI_DEVICE_SUB(PCI_VENDOR_ID_REDHAT_QUMRANET,
+		     0x1110,   // the device id of IVSHMEM PCI device
+		     PCI_VENDOR_ID_INTEL,
+		     PCI_DEVICE_ID_OPTEE2) },
+	{ PCI_DEVICE_SUB(PCI_VENDOR_ID_REDHAT_QUMRANET,
+		     0x1110,   // the device id of IVSHMEM PCI device
+		     PCI_VENDOR_ID_INTEL,
+		     PCI_DEVICE_ID_OPTEE3) },
+	{ 0 },
 };
 MODULE_DEVICE_TABLE(pci, ivshmem_id_table);
 
