@@ -85,7 +85,9 @@ struct spidev_data {
 	u32			speed_hz;
 	int			irq;
 	bool			notified;
-	struct wait_queue_head	waitq;};
+	struct wait_queue_head	waitq;
+	spinlock_t		irq_lock;
+};
 
 static LIST_HEAD(device_list);
 static DEFINE_MUTEX(device_list_lock);
@@ -99,8 +101,12 @@ MODULE_PARM_DESC(bufsiz, "data bytes in biggest supported SPI message");
 static irqreturn_t handshake_irq(int __attribute__((unused)) irq, void *id)
 {
 	struct spidev_data *spidev = id;
+	unsigned long flags;
 
-	wake_up_interruptible_all(&spidev->waitq);
+	spin_lock_irqsave(&spidev->irq_lock, flags);
+	spidev->notified = true;
+	spin_unlock_irqrestore(&spidev->irq_lock, flags);
+	wake_up_interruptible(&spidev->waitq);
 
 	return IRQ_HANDLED;
 }
@@ -722,9 +728,15 @@ static unsigned int spidev_poll(struct file *filp, struct poll_table_struct *wai
 {
 	struct spidev_data *spidev;
 	__poll_t mask = 0;
+
 	spidev = filp->private_data;
 	poll_wait(filp, &spidev->waitq, wait);
-	mask |= ( POLLIN | POLLRDNORM );
+	if (spidev->notified) {
+		mask |= ( POLLIN | POLLRDNORM );
+		spin_lock_irq(&spidev->irq_lock);
+		spidev->notified = false;
+		spin_unlock_irq(&spidev->irq_lock);
+	}
 	return mask;
 }
 
@@ -846,6 +858,7 @@ static int spidev_probe(struct spi_device *spi)
 	spidev->spi = spi;
 	mutex_init(&spidev->spi_lock);
 	mutex_init(&spidev->buf_lock);
+	spin_lock_init(&spidev->irq_lock);
 
 	INIT_LIST_HEAD(&spidev->device_entry);
 
