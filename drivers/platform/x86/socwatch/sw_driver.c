@@ -835,6 +835,7 @@ sw_set_driver_infos_i(struct sw_driver_interface_msg __user *remote_msg,
 	 * present in the respective allow-lists before allocating any collector nodes.
 	 */
 	if (sw_validate_driver_infos_i(local_msg)) {
+		vfree(local_msg);
 		/* Error message printed in the respective validate functions */
 		return -EACCES; /* Permission denied */
 	}

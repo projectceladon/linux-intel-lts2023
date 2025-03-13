@@ -196,6 +196,11 @@ static int virtio_spi_transfer_one(struct spi_master *master,
 	req->head.word_delay_ns = spi_delay_to_ns(&xfer->word_delay, xfer);
 	req->head.cs_setup_ns = spi_delay_to_ns(&spi->cs_setup, xfer);
 	req->head.cs_delay_hold_ns = spi_delay_to_ns(&spi->cs_hold, xfer);
+
+	if ((spi_delay_to_ns(&spi->cs_inactive, xfer)
+		+ spi_delay_to_ns(&xfer->cs_change_delay, xfer)) < 0)
+		goto err_free;
+
 	req->head.cs_change_delay_inactive_ns = spi_delay_to_ns(&spi->cs_inactive, xfer) + spi_delay_to_ns(&xfer->cs_change_delay, xfer);
 	sg_init_one(&head, &req->head, sizeof(req->head));
 	sgs[0] = &head;

@@ -654,7 +654,7 @@ static void *vi_dma_alloc(struct device *dev, size_t size,
 		return NULL;
 	}
 
-	*dma_handle = chunk << vi_dev->alloc_shift;
+	*dma_handle = (dma_addr_t)chunk << vi_dev->alloc_shift;
 	addr = vi_dev->shmem + *dma_handle;
 	memset(addr, 0, size);
 
