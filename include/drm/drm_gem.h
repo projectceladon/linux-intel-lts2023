@@ -61,6 +61,8 @@ struct drm_gem_object;
 enum drm_gem_object_status {
 	DRM_GEM_OBJECT_RESIDENT  = BIT(0),
 	DRM_GEM_OBJECT_PURGEABLE = BIT(1),
+	DRM_GEM_OBJECT_ACTIVE    = BIT(2),
+
 };
 
 /**
@@ -595,6 +597,17 @@ static inline void drm_gem_gpuva_init(struct drm_gem_object *obj)
 {
 	INIT_LIST_HEAD(&obj->gpuva.list);
 }
+
+/**
+ * drm_gem_for_each_gpuvm_bo() - iterator to walk over a list of &drm_gpuvm_bo
+ * @entry__: &drm_gpuvm_bo structure to assign to in each iteration step
+ * @obj__: the &drm_gem_object the &drm_gpuvm_bo to walk are associated with
+ *
+ * This iterator walks over all &drm_gpuvm_bo structures associated with the
+ * &drm_gem_object.
+ */
+#define drm_gem_for_each_gpuvm_bo(entry__, obj__) \
+        list_for_each_entry(entry__, &(obj__)->gpuva.list, list.entry.gem)
 
 /**
  * drm_gem_for_each_gpuva() - iternator to walk over a list of gpuvas
