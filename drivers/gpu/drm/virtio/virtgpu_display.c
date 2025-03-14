@@ -33,6 +33,7 @@
 #include <drm/drm_probe_helper.h>
 #include <drm/drm_simple_kms_helper.h>
 #include <drm/drm_vblank.h>
+#include <drm/display/drm_hdcp_helper.h>
 
 #include "virtgpu_drv.h"
 
@@ -47,6 +48,8 @@
 
 #define drm_connector_to_virtio_gpu_output(x) \
 	container_of(x, struct virtio_gpu_output, conn)
+#define hdcp_to_virtio_gpu_output(x) \
+	container_of(x, struct virtio_gpu_output, hdcp)
 
 static int virtio_irq_enable_vblank(struct drm_crtc *crtc)
 {
@@ -349,6 +352,40 @@ static const struct drm_connector_funcs virtio_gpu_connector_funcs = {
 	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
 };
 
+static void virtio_gpu_hdcp_prop_work(struct work_struct *work)
+{
+	struct virtio_gpu_hdcp *hdcp = container_of(work, struct virtio_gpu_hdcp, prop_work);
+	struct virtio_gpu_output *output = hdcp_to_virtio_gpu_output(hdcp);
+	struct drm_connector *connector = &output->conn;
+
+	DRM_DEBUG("virtio gpu hdcp prop work\n");
+	if (!connector || !connector->dev)
+	       return;
+	drm_modeset_lock(&connector->dev->mode_config.connection_mutex, NULL);
+	mutex_lock(&hdcp->mutex);
+	if (hdcp->value != DRM_MODE_CONTENT_PROTECTION_UNDESIRED) {
+		drm_hdcp_update_content_protection(connector, hdcp->value);
+	}
+	mutex_unlock(&hdcp->mutex);
+	drm_modeset_unlock(&connector->dev->mode_config.connection_mutex);
+	drm_connector_put(connector);
+}
+
+static void vgdev_hdcp_init(struct virtio_gpu_device *vgdev, struct virtio_gpu_hdcp *hdcp, int index)
+{
+	struct virtio_gpu_output *output = hdcp_to_virtio_gpu_output(hdcp);
+	struct drm_connector *connector = &output->conn;
+	virtio_gpu_cmd_cp_query(vgdev, index);
+	drm_connector_attach_content_protection_property(connector, hdcp->hdcp2);
+	hdcp->value = 0;
+	hdcp->type = 0;
+	DRM_DEBUG("virtio gpu hdcp init, hdcp2:%d\n", hdcp->hdcp2);
+
+	virtio_gpu_cmd_cp_set(vgdev, index, hdcp->value, hdcp->type);
+	mutex_init(&hdcp->mutex);
+	INIT_WORK(&hdcp->prop_work, virtio_gpu_hdcp_prop_work);
+}
+
 static int vgdev_output_init(struct virtio_gpu_device *vgdev, int index)
 {
 	struct drm_device *dev = vgdev->ddev;
@@ -399,6 +436,8 @@ static int vgdev_output_init(struct virtio_gpu_device *vgdev, int index)
 	encoder->possible_crtcs = 1 << index;
 
 	drm_connector_attach_encoder(connector, encoder);
+	if (vgdev->has_hdcp)
+		vgdev_hdcp_init(vgdev, &output->hdcp, index);
 	drm_connector_register(connector);
 	return 0;
 }
@@ -508,9 +547,36 @@ virtio_gpu_wait_for_vblanks(struct drm_device *dev,
 	}
 }
 
+static void virtio_gpu_hdcp_atomic_process(struct drm_atomic_state *state)
+{
+	struct drm_connector *connector;
+	struct drm_connector_state *old_con_state, *new_con_state;
+	struct virtio_gpu_output *output;
+	struct virtio_gpu_device *vgdev;
+	uint32_t i;
+	for_each_oldnew_connector_in_state(state, connector, old_con_state, new_con_state, i) {
+		output = drm_connector_to_virtio_gpu_output(connector);
+		vgdev = connector->dev->dev_private;
+		if (vgdev->has_hdcp && (old_con_state->hdcp_content_type != new_con_state->hdcp_content_type ||
+				old_con_state->content_protection != new_con_state->content_protection)) {
+			DRM_DEBUG("hdcp state changed, send cmd to host\n");
+
+			if (new_con_state->content_protection == DRM_MODE_CONTENT_PROTECTION_UNDESIRED) {
+				mutex_lock(&output->hdcp.mutex);
+				output->hdcp.value = DRM_MODE_CONTENT_PROTECTION_UNDESIRED;
+				mutex_unlock(&output->hdcp.mutex);
+		}
+
+			virtio_gpu_cmd_cp_set(vgdev, output->index, new_con_state->hdcp_content_type, new_con_state->content_protection);
+		}
+	}
+}
+
 static void virtio_gpu_commit_tail(struct drm_atomic_state *old_state)
 {
 	struct drm_device *dev = old_state->dev;
+
+	virtio_gpu_hdcp_atomic_process(old_state);
 
 	drm_atomic_helper_commit_modeset_disables(dev, old_state);
 

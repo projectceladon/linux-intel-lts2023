@@ -13,6 +13,21 @@
 #include "intel_pxp_types.h"
 #include "intel_pxp_regs.h"
 
+void intel_pxp_uevent(struct intel_pxp *pxp, int event)
+{
+	struct intel_gt *gt = pxp->ctrl_gt;
+	struct drm_device *dev = &gt->i915->drm;
+	char event_str[25];
+	char *envp[2] = { event_str, NULL };
+
+	snprintf(event_str, ARRAY_SIZE(event_str),
+			"PXP_EVENT=%u", event);
+
+	DRM_DEBUG("generating pxp event :%d\n", event);
+
+	kobject_uevent_env(&dev->primary->kdev->kobj, KOBJ_CHANGE, envp);
+}
+
 static u8 get_next_instance_id(struct intel_pxp *pxp, u32 id)
 {
 	u8 next_id = ++pxp->next_tag_id[id];
@@ -511,8 +526,10 @@ static void pxp_session_work(struct work_struct *work)
 
 	drm_dbg(&gt->i915->drm, "PXP: processing event-flags 0x%08x", events);
 
-	if (events & PXP_INVAL_REQUIRED)
+	if (events & PXP_INVAL_REQUIRED) {
+		intel_pxp_uevent(pxp, PXP_INVAL_REQUIRED);
 		intel_pxp_invalidate(pxp);
+	}
 
 	/*
 	 * If we're processing an event while suspending then don't bother,
@@ -524,11 +541,14 @@ static void pxp_session_work(struct work_struct *work)
 
 	if (events & PXP_TERMINATION_REQUEST) {
 		events &= ~PXP_TERMINATION_COMPLETE;
+		intel_pxp_uevent(pxp, PXP_TERMINATION_REQUEST);
 		intel_pxp_terminate(pxp, true);
 	}
 
-	if (events & PXP_TERMINATION_COMPLETE)
+	if (events & PXP_TERMINATION_COMPLETE) {
+		intel_pxp_uevent(pxp, PXP_TERMINATION_COMPLETE);
 		pxp_terminate_complete(pxp);
+	}
 
 	intel_runtime_pm_put(gt->uncore->rpm, wakeref);
 }
