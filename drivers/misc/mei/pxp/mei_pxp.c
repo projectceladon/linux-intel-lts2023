@@ -27,11 +27,10 @@
  * @dev: device corresponding to the mei_cl_device
  * @message: a message buffer to send
  * @size: size of the message
- * @vtag: the vtag of the connection (use 0 for default)
  * Return: 0 on Success, <0 on Failure
  */
 static int
-mei_pxp_send_message(struct device *dev, const void *message, size_t size, u8 vtag)
+mei_pxp_send_message(struct device *dev, const void *message, size_t size)
 {
 	struct mei_cl_device *cldev;
 	ssize_t byte;
@@ -41,7 +40,7 @@ mei_pxp_send_message(struct device *dev, const void *message, size_t size, u8 vt
 
 	cldev = to_mei_cl_device(dev);
 
-	byte = mei_cldev_send_vtag(cldev, (u8 *)message, size, vtag);
+	byte = mei_cldev_send(cldev, message, size);
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_send failed. %zd\n", byte);
 		return byte;
@@ -55,11 +54,10 @@ mei_pxp_send_message(struct device *dev, const void *message, size_t size, u8 vt
  * @dev: device corresponding to the mei_cl_device
  * @buffer: a message buffer to contain the received message
  * @size: size of the buffer
- * @vtag: the vtag of the connection (use 0 for default)
  * Return: bytes sent on Success, <0 on Failure
  */
 static int
-mei_pxp_receive_message(struct device *dev, void *buffer, size_t size, u8 vtag)
+mei_pxp_receive_message(struct device *dev, void *buffer, size_t size)
 {
 	struct mei_cl_device *cldev;
 	ssize_t byte;
@@ -69,7 +67,7 @@ mei_pxp_receive_message(struct device *dev, void *buffer, size_t size, u8 vtag)
 
 	cldev = to_mei_cl_device(dev);
 
-	byte = mei_cldev_recv_vtag(cldev, buffer, size, &vtag);
+	byte = mei_cldev_recv(cldev, buffer, size);
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_recv failed. %zd\n", byte);
 		return byte;

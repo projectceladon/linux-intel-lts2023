@@ -853,9 +853,7 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (ret)
 		goto out_cleanup_modeset2;
 
-	ret = intel_pxp_init(i915);
-	if (ret != -ENODEV)
-		drm_dbg(&i915->drm, "pxp init failed with %d\n", ret);
+	intel_pxp_init(i915);
 
 	ret = intel_display_driver_probe(i915);
 	if (ret)
