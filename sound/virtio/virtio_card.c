@@ -15,6 +15,10 @@ u32 virtsnd_msg_timeout_ms = MSEC_PER_SEC;
 module_param_named(msg_timeout_ms, virtsnd_msg_timeout_ms, uint, 0644);
 MODULE_PARM_DESC(msg_timeout_ms, "Message completion timeout in milliseconds");
 
+u32 virtsnd_verbose = 0;
+module_param_named(verbose, virtsnd_verbose, uint, 0644);
+MODULE_PARM_DESC(verbose, "Verbose log enable or not");
+
 static void virtsnd_remove(struct virtio_device *vdev);
 
 /**
