@@ -302,6 +302,8 @@ static void virtsnd_pcm_msg_complete(struct virtio_pcm_msg *msg,
 				     size_t written_bytes)
 {
 	struct virtio_pcm_substream *vss = msg->substream;
+	struct virtio_snd *snd = vss->snd;
+	struct virtio_device *vdev = snd->vdev;
 
 	/*
 	 * hw_ptr always indicates the buffer position of the first I/O message
@@ -339,6 +341,12 @@ static void virtsnd_pcm_msg_complete(struct virtio_pcm_msg *msg,
 		wake_up_all(&vss->msg_empty);
 	}
 	spin_unlock(&vss->lock);
+
+	if (virtsnd_verbose)
+		dev_info(&vdev->dev, "%s msg complete, SID %u, vss_hw=%lu\n",
+				vss->direction ? "capture" : "playback",
+				vss->sid, vss->hw_ptr);
+
 }
 
 /**
