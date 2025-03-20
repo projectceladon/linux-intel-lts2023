@@ -309,8 +309,17 @@ static void virtsnd_pcm_period_elapsed(struct work_struct *work)
 {
 	struct virtio_pcm_substream *vss =
 		container_of(work, struct virtio_pcm_substream, elapsed_period);
+	struct virtio_snd *snd = vss->snd;
+	struct virtio_device *vdev = snd->vdev;
+	struct snd_pcm_runtime *runtime = vss->substream->runtime;
 
 	snd_pcm_period_elapsed(vss->substream);
+
+	if (virtsnd_verbose) {
+		dev_info(&vdev->dev, "%s, SID: %u, runtime hw=%ld, app=%ld\n",
+				__func__, vss->sid, (unsigned long)runtime->status->hw_ptr,
+				(unsigned long)runtime->control->appl_ptr);
+	}
 }
 
 /**
@@ -513,7 +522,7 @@ void virtsnd_pcm_event(struct virtio_snd *snd, struct virtio_snd_event *event)
 		break;
 	}
 }
-#ifdef CONFIG_VIRTIO_IVSHMEM
+#if defined(CONFIG_VIRTIO_IVSHMEM) && defined(CONFIG_SND_VIRTIO)
 bool virtsnd_pcm_is_ivshmem_region(struct snd_pcm_substream *substream)
 {
 	struct snd_card *card;
