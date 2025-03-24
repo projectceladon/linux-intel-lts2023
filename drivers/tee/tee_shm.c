@@ -611,3 +611,4 @@ void tee_shm_put(struct tee_shm *shm)
 		dma_buf_put(shm->dmabuf);
 }
 EXPORT_SYMBOL_GPL(tee_shm_put);
+MODULE_IMPORT_NS(DMA_BUF);

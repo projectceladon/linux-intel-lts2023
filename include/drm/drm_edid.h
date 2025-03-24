@@ -269,6 +269,14 @@ struct detailed_timing {
 #define DRM_EDID_DSC_MAX_SLICES			0xf
 #define DRM_EDID_DSC_TOTAL_CHUNK_KBYTES		0x3f
 
+struct drm_edid_product_id {
+	__be16 manufacturer_name;
+	__le16 product_code;
+	__le32 serial_number;
+	u8 week_of_manufacture;
+	u8 year_of_manufacture;
+} __attribute__((packed));
+
 /* ELD Header Block */
 #define DRM_ELD_HEADER_BLOCK_SIZE	4
 
@@ -330,11 +338,18 @@ struct detailed_timing {
 struct edid {
 	u8 header[8];
 	/* Vendor & product info */
-	u8 mfg_id[2];
-	u8 prod_code[2];
-	u32 serial; /* FIXME: byte order */
-	u8 mfg_week;
-	u8 mfg_year;
+	union {
+		struct drm_edid_product_id product_id;
+		struct {
+			u8 mfg_id[2];
+			u8 prod_code[2];
+			u32 serial; /* FIXME: byte order */
+			u8 mfg_week;
+			u8 mfg_year;
+		} __attribute__((packed));
+
+	} __attribute__((packed));
+
 	/* EDID version */
 	u8 version;
 	u8 revision;
@@ -617,4 +632,8 @@ bool drm_edid_is_digital(const struct drm_edid *drm_edid);
 const u8 *drm_find_edid_extension(const struct drm_edid *drm_edid,
 				  int ext_id, int *ext_index);
 
+void drm_edid_get_product_id(const struct drm_edid *drm_edid,
+			     struct drm_edid_product_id *id);
+void drm_edid_print_product_id(struct drm_printer *p,
+			       const struct drm_edid_product_id *id, bool raw);
 #endif /* __DRM_EDID_H__ */

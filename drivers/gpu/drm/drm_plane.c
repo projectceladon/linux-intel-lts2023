@@ -786,6 +786,7 @@ int drm_plane_check_pixel_format(struct drm_plane *plane,
 
 	return 0;
 }
+EXPORT_SYMBOL(drm_plane_check_pixel_format);
 
 static int __setplane_check(struct drm_plane *plane,
 			    struct drm_crtc *crtc,
