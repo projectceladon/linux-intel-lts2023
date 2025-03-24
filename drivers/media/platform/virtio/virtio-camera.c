@@ -20,6 +20,7 @@
 #include <media/v4l2-device.h>
 #include <media/v4l2-event.h>
 #include <media/v4l2-ioctl.h>
+#include <linux/videodev2.h>
 
 #include <asm/msr.h>
 #include "linux/virtio_shm.h"
@@ -570,6 +571,179 @@ static int vcam_s_input(struct file *filp, void *p, unsigned int i)
 	return 0;
 }
 
+static int vcam_g_ctrl(struct file *file, void *fh, struct v4l2_control *control)
+{
+    struct virtio_camera_video *vnode = video_drvdata(file);
+    struct virtio_camera_ctrl_req *vcam_req;
+    int err;
+
+    vcam_req = virtio_camera_create_req(VIRTIO_CAMERA_CMD_GET_CTRL);
+    if (unlikely(vcam_req == NULL)) {
+        pr_err("virtio-camera: vnode%d fail to init get_ctrl-req, no mem.\n", vnode->idx);
+        return -ENOMEM;
+    }
+
+    vcam_req->ctrl.u.ctrl.id = control->id;
+
+    err = vcam_vq_request(vnode, vcam_req, NULL, 0, false);
+    if (err) {
+        pr_err("virtio-camera: vnode%d get_ctrl failed, err response.\n", vnode->idx);
+        goto err_free;
+    }
+
+    control->value = vcam_req->resp.u.ctrl.value;
+
+err_free:
+    kfree(vcam_req);
+    return err;
+}
+
+
+static int vcam_query_ctrl(struct file *file, void *fh, struct v4l2_queryctrl *control)
+{
+    struct virtio_camera_video *vnode = video_drvdata(file);
+    struct virtio_camera_ctrl_req *vcam_req;
+    int err;
+
+    vcam_req = virtio_camera_create_req(VIRTIO_CAMERA_CMD_QUERY_CTRL);
+    if (unlikely(vcam_req == NULL)) {
+        pr_err("virtio-camera: vnode%d fail to init query_ctrl-req, no mem.\n", vnode->idx);
+        return -ENOMEM;
+    }
+
+    vcam_req->ctrl.u.ctrl.id = control->id;
+
+    err = vcam_vq_request(vnode, vcam_req, NULL, 0, false);
+    if (err) {
+        pr_err("virtio-camera: vnode%d query_ctrl failed, err response.\n", vnode->idx);
+        goto err_free;
+    }
+
+    control->type = vcam_req->resp.u.ctrl.type;
+    control->minimum = vcam_req->resp.u.ctrl.minimum;
+    control->maximum = vcam_req->resp.u.ctrl.maximum;
+    control->step = vcam_req->resp.u.ctrl.step;
+    control->default_value = vcam_req->resp.u.ctrl.default_value;
+    control->flags = vcam_req->resp.u.ctrl.flags;
+
+err_free:
+    kfree(vcam_req);
+    return err;
+}
+
+static int vcam_query_ext_ctrl(struct file *file, void *fh, struct v4l2_query_ext_ctrl *control)
+{
+    struct virtio_camera_video *vnode = video_drvdata(file);
+    struct virtio_camera_ctrl_req *vcam_req;
+    int err;
+
+    vcam_req = virtio_camera_create_req(VIRTIO_CAMERA_CMD_QUERY_EXT_CTRL);
+    if (unlikely(vcam_req == NULL)) {
+        pr_err("virtio-camera: vnode%d fail to init query_ext_ctrl-req, no mem.\n", vnode->idx);
+        return -ENOMEM;
+    }
+
+    vcam_req->ctrl.u.ctrl.id = control->id;
+
+    err = vcam_vq_request(vnode, vcam_req, NULL, 0, false);
+    if (err) {
+        pr_err("virtio-camera: vnode%d query_ext_ctrl failed, err response.\n", vnode->idx);
+        goto err_free;
+    }
+
+    control->type = vcam_req->resp.u.ctrl.type;
+    control->minimum = vcam_req->resp.u.ctrl.minimum;
+    control->maximum = vcam_req->resp.u.ctrl.maximum;
+    control->step = vcam_req->resp.u.ctrl.step;
+    control->default_value = vcam_req->resp.u.ctrl.default_value;
+    control->flags = vcam_req->resp.u.ctrl.flags;
+
+err_free:
+    kfree(vcam_req);
+    return err;
+}
+
+static int vcam_s_ctrl(struct file *file, void *fh, struct v4l2_control *control)
+{
+    struct virtio_camera_video *vnode = video_drvdata(file);
+    struct virtio_camera_ctrl_req *vcam_req;
+    int err;
+
+    vcam_req = virtio_camera_create_req(VIRTIO_CAMERA_CMD_SET_CTRL);
+    if (unlikely(vcam_req == NULL)) {
+        pr_err("virtio-camera: vnode%d fail to init set_ctrl-req, no mem.\n", vnode->idx);
+        return -ENOMEM;
+    }
+
+    vcam_req->ctrl.u.ctrl.id = control->id;
+    vcam_req->ctrl.u.ctrl.value = control->value;
+
+    err = vcam_vq_request(vnode, vcam_req, NULL, 0, false);
+    if (err) {
+        pr_err("virtio-camera: vnode%d set_ctrl failed, err response.\n", vnode->idx);
+    }
+
+    kfree(vcam_req);
+    return err;
+}
+
+static int vcam_s_ext_ctrls(struct file *file, void *fh, struct v4l2_ext_controls *controls)
+{
+    struct virtio_camera_video *vnode = video_drvdata(file);
+    struct virtio_camera_ctrl_req *vcam_req;
+    struct virtio_camera_mem_entry *ents;
+    int err;
+
+    // Allocate buffer for controls in kernel space
+    size_t size = sizeof(struct virtio_camera_req_ext_ctrls) +
+                  controls->count * sizeof(struct virtio_camera_req_ctrl);
+
+    struct virtio_camera_req_ext_ctrls *ext_ctrls = kmalloc(size, GFP_KERNEL);
+    if (!ext_ctrls) {
+        pr_err("virtio-camera: vnode%d fail to alloc ext_ctrls, no mem.\n", vnode->idx);
+        return -ENOMEM;
+    }
+
+    // Copy controls data into the allocated buffer
+    ext_ctrls->count = controls->count;
+    for (int i = 0; i < controls->count; i++) {
+        ext_ctrls->controls[i].id = controls->controls[i].id;
+        ext_ctrls->controls[i].value = controls->controls[i].value;
+    }
+
+    // Create request
+    vcam_req = virtio_camera_create_req(VIRTIO_CAMERA_CMD_SET_EXT_CTRLS);
+    if (unlikely(vcam_req == NULL)) {
+        pr_err("virtio-camera: vnode%d fail to init set_ext_ctrls-req, no mem.\n", vnode->idx);
+        kfree(ext_ctrls);
+        return -ENOMEM;
+    }
+
+    // Allocate and initialize virtio_camera_mem_entry
+    ents = kmalloc(sizeof(struct virtio_camera_mem_entry), GFP_KERNEL);
+    if (!ents) {
+        pr_err("virtio-camera: vnode%d fail to alloc ents, no mem.\n", vnode->idx);
+        kfree(vcam_req);
+        kfree(ext_ctrls);
+        return -ENOMEM;
+    }
+
+    ents->addr = (uintptr_t)ext_ctrls; // GPA to HVA conversion will be handled later
+    ents->length = size;
+
+    // Send request
+    err = vcam_vq_request(vnode, vcam_req, ents, 1, false);
+    if (err) {
+        pr_err("virtio-camera: vnode%d set_ext_ctrls failed, err response.\n", vnode->idx);
+    }
+
+    // Clean up resources
+    kfree(ents);
+    kfree(vcam_req);
+    kfree(ext_ctrls);
+    return err;
+}
+
 static const struct v4l2_ioctl_ops vcam_ioctl_ops = {
 	.vidioc_querycap = vcam_querycap,
 	.vidioc_enum_fmt_vid_cap = vcam_enum_fmt,
@@ -591,6 +765,11 @@ static const struct v4l2_ioctl_ops vcam_ioctl_ops = {
 	.vidioc_enum_input = vcam_enum_input,
 	.vidioc_g_input = vcam_g_input,
 	.vidioc_s_input = vcam_s_input,
+	.vidioc_g_ctrl = vcam_g_ctrl,
+	.vidioc_query_ext_ctrl = vcam_query_ext_ctrl,
+	.vidioc_queryctrl = vcam_query_ctrl,
+	.vidioc_s_ctrl = vcam_s_ctrl,
+	.vidioc_s_ext_ctrls = vcam_s_ext_ctrls,
 };
 
 static int
