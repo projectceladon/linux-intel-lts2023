@@ -725,21 +725,22 @@ void sw_read_mailbox_info_i(char *dst_vals, int cpu,
 
 	if (mailbox->is_msr_type) {
 		u64 command = 0;
+		int err = 0;
 
-		rdmsrl_safe(interface_address, &command);
+		err = rdmsrl_safe(interface_address, &command);
 		command &= mailbox->command_mask;
 		command |= mailbox->command | (u64)0x1 << mailbox->run_busy_bit;
 		wrmsrl_safe(interface_address, command);
 		do {
 			udelay(1);
-			rdmsrl_safe(interface_address, &command);
+			err = rdmsrl_safe(interface_address, &command);
 		} while ((command & ((u64)0x1 << mailbox->run_busy_bit)) &&
 				++iter < MAX_MAILBOX_ITERS);
 		if (iter >= MAX_MAILBOX_ITERS) {
 			pw_pr_error("Couldn't write to BIOS mailbox\n");
 			command = MAX_UNSIGNED_64_BIT_VALUE;
 		} else
-			rdmsrl_safe(data_address, &command);
+			err = rdmsrl_safe(data_address, &command);
 		switch (counter_size_in_bytes) {
 		case 4:
 			*((u32 *)dst_vals) = (u32)command;
@@ -979,15 +980,16 @@ void sw_write_mailbox_info_i(char *dst_vals, int cpu,
 
 	if (mailbox->is_msr_type) {
 		u64 command = 0;
+		int err = 0;
 
-		rdmsrl_safe(interface_address, &command);
+		err = rdmsrl_safe(interface_address, &command);
 		command &= mailbox->command_mask;
 		command |= mailbox->command |
 				(u64)0x1 << mailbox->run_busy_bit;
 		wrmsrl_safe(data_address, data);
 		wrmsrl_safe(interface_address, command);
 		do {
-			rdmsrl_safe(interface_address, &command);
+			err = rdmsrl_safe(interface_address, &command);
 		} while ((command & ((u64)0x1 << mailbox->run_busy_bit)) &&
 				++iter < MAX_MAILBOX_ITERS);
 	} else {
