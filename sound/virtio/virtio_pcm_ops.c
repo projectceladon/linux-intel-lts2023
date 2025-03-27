@@ -159,6 +159,8 @@ static int virtsnd_pcm_dev_set_params(struct virtio_pcm_substream *vss,
 {
 	struct virtio_snd_msg *msg;
 	struct virtio_snd_pcm_set_params *request;
+	struct virtio_snd *snd = vss->snd;
+	struct virtio_device *vdev = snd->vdev;
 	unsigned int i;
 	int vformat = -1;
 	int vrate = -1;
@@ -199,6 +201,11 @@ static int virtsnd_pcm_dev_set_params(struct virtio_pcm_substream *vss,
 	if (vss->features & (1U << VIRTIO_SND_PCM_F_EVT_XRUNS))
 		request->features |=
 			cpu_to_le32(1U << VIRTIO_SND_PCM_F_EVT_XRUNS);
+
+	if (virtsnd_verbose) {
+		dev_info(&vdev->dev, "%s, SID: %u, command=SET_PARAMS\n",
+				__func__, vss->sid);
+	}
 
 	return virtsnd_ctl_msg_send_sync(vss->snd, msg);
 }
@@ -309,6 +316,11 @@ static int virtsnd_pcm_prepare(struct snd_pcm_substream *substream)
 	if (!msg)
 		return -ENOMEM;
 
+	if (virtsnd_verbose) {
+		dev_info(&vdev->dev, "%s, SID: %u, command=PREPARE\n",
+			__func__, vss->sid);
+	}
+
 	return virtsnd_ctl_msg_send_sync(vss->snd, msg);
 }
 
@@ -325,6 +337,7 @@ static int virtsnd_pcm_trigger(struct snd_pcm_substream *substream, int command)
 {
 	struct virtio_pcm_substream *vss = snd_pcm_substream_chip(substream);
 	struct virtio_snd *snd = vss->snd;
+	struct virtio_device *vdev = snd->vdev;
 	struct virtio_snd_queue *queue;
 	struct virtio_snd_msg *msg;
 	unsigned long flags;
@@ -356,6 +369,11 @@ static int virtsnd_pcm_trigger(struct snd_pcm_substream *substream, int command)
 			return -ENOMEM;
 		}
 
+		if (virtsnd_verbose) {
+			dev_info(&vdev->dev, "%s, SID: %u, command=START\n",
+				__func__, vss->sid);
+		}
+
 		return virtsnd_ctl_msg_send_sync(snd, msg);
 	case SNDRV_PCM_TRIGGER_SUSPEND:
 		vss->suspended = true;
@@ -372,6 +390,11 @@ static int virtsnd_pcm_trigger(struct snd_pcm_substream *substream, int command)
 						GFP_KERNEL);
 		if (!msg)
 			return -ENOMEM;
+
+		if (virtsnd_verbose) {
+			dev_info(&vdev->dev, "%s, SID: %u, command=STOP\n",
+			__func__, vss->sid);
+		}
 
 		return virtsnd_ctl_msg_send_sync(snd, msg);
 	default:
@@ -393,6 +416,7 @@ static int virtsnd_pcm_sync_stop(struct snd_pcm_substream *substream)
 {
 	struct virtio_pcm_substream *vss = snd_pcm_substream_chip(substream);
 	struct virtio_snd *snd = vss->snd;
+	struct virtio_device *vdev = snd->vdev;
 	struct virtio_snd_msg *msg;
 	unsigned int js = msecs_to_jiffies(virtsnd_msg_timeout_ms);
 	int rc;
@@ -406,6 +430,11 @@ static int virtsnd_pcm_sync_stop(struct snd_pcm_substream *substream)
 					GFP_KERNEL);
 	if (!msg)
 		return -ENOMEM;
+
+	if (virtsnd_verbose) {
+		dev_info(&vdev->dev, "%s, SID: %u, command=RELEASE\n",
+			__func__, vss->sid);
+	}
 
 	rc = virtsnd_ctl_msg_send_sync(snd, msg);
 	if (rc)
