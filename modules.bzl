@@ -13,7 +13,6 @@ _COMMON_GKI_MODULES_LIST = [
     "drivers/bluetooth/btrtl.ko",
     "drivers/bluetooth/btusb.ko",
     "drivers/bluetooth/hci_uart.ko",
-    "drivers/platform/x86/socwatch/socwatch2_15.ko",
     "net/bluetooth/bluetooth.ko",
     "net/bluetooth/hidp/hidp.ko",
     "net/bluetooth/rfcomm/rfcomm.ko",
