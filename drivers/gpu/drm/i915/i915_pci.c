@@ -1185,7 +1185,9 @@ int i915_pci_register_driver(void)
 {
 	int ret;
 	ret = pci_register_driver(&i915_pci_driver);
+#ifdef ENABLE_I915_OOT_MODULE_LOADING
 	gfx_out_of_tree_load(NULL);
+#endif // ENABLE_I915_OOT_MODULE_LOADING
 	return ret;
 }
 
