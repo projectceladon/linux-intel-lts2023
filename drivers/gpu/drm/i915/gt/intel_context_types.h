@@ -112,7 +112,6 @@ struct intel_context {
 	u32 ring_size;
 	struct intel_ring *ring;
 	struct intel_timeline *timeline;
-	u64 last_end_time;
 
 	unsigned long flags;
 #define CONTEXT_BARRIER_BIT		0
@@ -153,6 +152,7 @@ struct intel_context {
 			struct ewma_runtime avg;
 			u64 total;
 			u32 last;
+			u32 dt;
 			I915_SELFTEST_DECLARE(u32 num_underflow);
 			I915_SELFTEST_DECLARE(u32 max_underflow);
 		} runtime;
@@ -173,6 +173,8 @@ struct intel_context {
 
 	/** sseu: Control eu/slice partitioning */
 	struct intel_sseu sseu;
+
+	u64 start_time_ns;
 
 	/**
 	 * pinned_contexts_link: List link for the engine's pinned contexts.

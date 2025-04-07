@@ -362,6 +362,8 @@ i915-y += \
 
 i915-y += i915_perf.o
 
+i915-y += i915_gpu_work.o
+
 # Protected execution platform (PXP) support. Base support is required for HuC
 i915-y += \
 	pxp/intel_pxp.o \

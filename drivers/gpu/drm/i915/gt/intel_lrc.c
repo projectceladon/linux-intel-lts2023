@@ -1946,6 +1946,7 @@ void lrc_update_runtime(struct intel_context *ce)
 
 	ewma_runtime_add(&stats->runtime.avg, dt);
 	stats->runtime.total += dt;
+	stats->runtime.dt = dt;
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
