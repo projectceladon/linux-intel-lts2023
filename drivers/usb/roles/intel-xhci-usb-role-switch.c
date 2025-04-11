@@ -16,6 +16,7 @@
 #include <linux/err.h>
 #include <linux/io.h>
 #include <linux/kernel.h>
+#include <linux/kstrtox.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
@@ -92,35 +93,74 @@
 /* SPR program max count */
 #define V_PCR_USB_OP_MAX_TIMEOUT_COUNT        0x00001000
 /* DAP eSS Port Control 0 Register */
-#define R_DAP_ESS_PORT_CONTROL_0_REG_0        0x600
+#define R_DAP_ESS_PORT_CONTROL_0_REG_0        0x1c4
 /*  DAP eSS Port Status Register */
-#define R_DAP_ESS_PORT_STATUS_REG_0           0x608
-/* Port0 is configured as usb device mode */
-#define DEVICE_PORT_NUM                       0x04
-/* Enable USB DAP FEATURE */
-#define USB_DAP_ENABLED
+#define R_DAP_ESS_PORT_STATUS_REG_0           0x1cc
 
 struct intel_xhci_usb_data {
 	struct device *dev;
 	struct usb_role_switch *role_sw;
 	void __iomem *base;
 	bool enable_sw_switch;
+	bool legacy_drd_switch;
+	bool dap_usb3_switch;
+	unsigned int port;
 };
 
-static const struct software_node intel_xhci_usb_node = {
-	"intel-xhci-usb-sw",
-};
+static ssize_t port_show(struct device *dev, struct device_attribute *attr,
+		char *buf)
+{
+	struct intel_xhci_usb_data *data = dev_get_drvdata(dev);
+	return sprintf(buf, "%d\n", data->port);
+}
 
-static enum usb_role intel_xhci_get_dap_port_status(unsigned int portnum,
-		struct intel_xhci_usb_data *data)
+static ssize_t port_store(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	int ret;
+	struct intel_xhci_usb_data *data = dev_get_drvdata(dev);
+	ret = kstrtouint(buf, 10, &data->port);
+	if (ret < 0)
+		return ret;
+	return count;
+}
+
+static DEVICE_ATTR(port, 0664, port_show, port_store);
+
+static enum usb_role intel_xhci_get_drd_port_status(
+					struct intel_xhci_usb_data *data)
+{
+	enum usb_role role;
+	u32 val;
+
+	pm_runtime_get_sync(data->dev);
+	val = readl(data->base + DUAL_ROLE_CFG0);
+	pm_runtime_put(data->dev);
+
+	if (!(val & SW_IDPIN))
+		role = USB_ROLE_HOST;
+	else if (val & SW_VBUS_VALID)
+		role = USB_ROLE_DEVICE;
+	else
+		role = USB_ROLE_NONE;
+
+	return role;
+}
+
+static enum usb_role intel_xhci_get_dap_port_status(
+					struct intel_xhci_usb_data *data)
 {
 	unsigned int val;
 	unsigned int portoffset;
 	enum usb_role role;
 
-	portoffset = portnum * 0x10;
-	val = readl(data->base + (portoffset +
-				R_DAP_USB2_PORT_STATUS_REG_0));
+	if (data->dap_usb3_switch)
+		portoffset = R_DAP_ESS_PORT_STATUS_REG_0 + data->port * 0x10;
+	else
+		portoffset = R_DAP_USB2_PORT_STATUS_REG_0 + data->port * 0x10;
+	pm_runtime_get_sync(data->dev);
+	val = readl(data->base + portoffset) & V_PCR_USB_OP_STATUS_MASK;
+	pm_runtime_put(data->dev);
 	if (val == V_PCR_USB_OP_STATUS_HOST)
 		role = USB_ROLE_HOST;
 	else if (val == V_PCR_USB_OP_STATUS_DEVICE ||
@@ -131,144 +171,23 @@ static enum usb_role intel_xhci_get_dap_port_status(unsigned int portnum,
 	return role;
 }
 
-
-void intel_xhci_force_port_xhci(unsigned int  portnum,
-		struct intel_xhci_usb_data *data)
-{
-	unsigned int portoffset;
-	unsigned int count;
-	unsigned int val;
-
-	portoffset = portnum * 0x10;
-	/* SDXPCHVBUS Set by CPU xDCI as USB2 connection in PCH is desired */
-	val = readl(data->base + (R_DAP_USB_COMMON_CONTROL_REG));
-	val &= ~R_DAP_USB_SDXPCHVBUS;
-	writel(val, data->base + (R_DAP_USB_COMMON_CONTROL_REG));
-	/* Initiate disconnect event */
-	val = readl(data->base + (portoffset +
-				R_DAP_USB2_PORT_CONTROL_0_REG_0));
-	val &= (unsigned int)(~V_PCR_USB_CONNECTOR_EVENT_MASK);
-	val |= V_PCR_USB_DISCONNRCT_CONNECTOR_EVENT;
-	writel(val, data->base + (R_DAP_USB2_PORT_CONTROL_0_REG_0 +
-				portoffset));
-	/* Poll USB2 OP Status */
-	for (count = 0x00; count < V_PCR_USB_OP_MAX_TIMEOUT_COUNT; count++) {
-		val = readl(data->base +
-				(portoffset + R_DAP_USB2_PORT_STATUS_REG_0));
-		val &= V_PCR_USB_OP_STATUS_MASK;
-		/*
-		 * Device:  Poll 0x08 || 0x80 || 0x20
-		 * HOST:    Poll 0x01 || 0x20
-		 * DBC:     Poll 0x40
-		 * Discon:  Poll 0x02 || 0x10
-		 */
-		if (val == V_PCR_USB_OP_STATUS_DISCONNECT)
-			break;
-	}
-	val = readl(data->base + (portoffset + R_DAP_USB2_PORT_CONTROL_0_REG_0));
-	val &= ~(V_PCR_USB_CONNECTOR_EVENT_MASK);
-	val |= V_PCR_USB_CONNECTOR_EVENT_HOST;
-	writel(val, data->base + (R_DAP_USB2_PORT_CONTROL_0_REG_0 + portoffset));
-	/* Poll USB2 OP Status */
-	for (count = 0x00; count < V_PCR_USB_OP_MAX_TIMEOUT_COUNT; count++) {
-		val = readl(data->base +
-				(portoffset + R_DAP_USB2_PORT_STATUS_REG_0));
-		val &= V_PCR_USB_OP_STATUS_MASK;
-		/*
-		 * Device:  Poll 0x08 || 0x80 || 0x20
-		 * HOST:    Poll 0x01 || 0x20
-		 * DBC:     Poll 0x40
-		 * Discon:  Poll 0x02 || 0x10
-		 */
-		if ((val == V_PCR_USB_OP_STATUS_HOST) ||
-				(val == V_PCR_USB_OP_STATUS_EXI_BSSB))
-			break;
-	}
-}
-
-void intel_xhci_force_port_xdci(unsigned int  portnum,
-		struct intel_xhci_usb_data *data)
-{
-	unsigned int portoffset;
-	unsigned int count;
-	unsigned int val;
-
-	portoffset = portnum * 0x10; /* Each Port has 0x10 bytes register */
-	/* SDXPCHVBUS Set by CPU xDCI as USB2 connection in PCH is desired */
-	val = readl(data->base + (R_DAP_USB_COMMON_CONTROL_REG));
-	val |= R_DAP_USB_SDXPCHVBUS;
-	writel(val, data->base + (R_DAP_USB_COMMON_CONTROL_REG));
-	/* Initiate disconnect event */
-	val = readl(data->base + (portoffset + R_DAP_USB2_PORT_CONTROL_0_REG_0));
-	val &= (unsigned int)(~V_PCR_USB_CONNECTOR_EVENT_MASK);
-	val |= V_PCR_USB_DISCONNRCT_CONNECTOR_EVENT;
-	writel(val, data->base + (R_DAP_USB2_PORT_CONTROL_0_REG_0 + portoffset));
-	/* Poll USB2 OP Status */
-	for (count = 0x00; count < V_PCR_USB_OP_MAX_TIMEOUT_COUNT; count++) {
-		val = readl(data->base +
-				(portoffset + R_DAP_USB2_PORT_STATUS_REG_0));
-		val &= V_PCR_USB_OP_STATUS_MASK;
-		/*
-		 * Device:  Poll 0x08 || 0x80 || 0x20
-		 * HOST:    Poll 0x01 || 0x20
-		 * DBC:     Poll 0x40
-		 * Discon:  Poll 0x02 || 0x10
-		 */
-		if (val == V_PCR_USB_OP_STATUS_DISCONNECT)
-			break;
-	}
-	val = readl(data->base + (portoffset +
-				R_DAP_USB2_PORT_CONTROL_0_REG_0));
-	val &= ~(V_PCR_USB_CONNECTOR_EVENT_MASK);
-	val |= V_PCR_USB_CONNECTOR_EVENT_DEVICE;
-	writel(val, data->base + (R_DAP_USB2_PORT_CONTROL_0_REG_0 +
-				portoffset));
-	/* Poll USB2 OP Status */
-	for (count = 0x00; count < V_PCR_USB_OP_MAX_TIMEOUT_COUNT; count++) {
-		val = readl(data->base +
-				(portoffset + R_DAP_USB2_PORT_STATUS_REG_0));
-		val &= V_PCR_USB_OP_STATUS_MASK;
-		/*
-		 * Device:  Poll 0x08 || 0x80 || 0x20
-		 * HOST:    Poll 0x01 || 0x20
-		 * DBC:     Poll 0x40
-		 * Discon:  Poll 0x02 || 0x10
-		 */
-		if ((val == V_PCR_USB_OP_STATUS_DEVICE) ||
-		(val == V_PCR_USB_OP_STATUS_OV_SUB_DEV) ||
-		(val == V_PCR_USB_OP_STATUS_EXI_BSSB))
-			break;
-	}
-	val = readl(data->base + (R_DAP_USB2_PORT_CONTROL_0_REG_0 +
-				portoffset));
-	val &= (unsigned int)(~V_PCR_USB_SW_VBUS);
-	val |= V_PCR_USB_SW_VBUS;
-	/* Write VBUS bit */
-	writel(val, data->base + (R_DAP_USB2_PORT_CONTROL_0_REG_0 +
-				portoffset));
-	/* status */
-	val = readl(data->base + (portoffset +
-				R_DAP_USB2_PORT_STATUS_REG_0));
-}
-
-static int intel_xhci_usb_set_role(struct usb_role_switch *sw,
-				   enum usb_role role)
+static enum usb_role intel_xhci_usb_get_role(struct usb_role_switch *sw)
 {
 	struct intel_xhci_usb_data *data = usb_role_switch_get_drvdata(sw);
+
+	if (data->legacy_drd_switch)
+		return intel_xhci_get_drd_port_status(data);
+	else
+		return intel_xhci_get_dap_port_status(data);
+}
+
+static int intel_xhci_usb_set_role_drd(struct intel_xhci_usb_data *data,
+				   enum usb_role role)
+{
 	unsigned long timeout;
 	acpi_status status;
 	u32 glk, val;
 	u32 drd_config = DRD_CONFIG_DYNAMIC;
-
-	#ifdef USB_DAP_ENABLED
-	if (role == USB_ROLE_HOST)
-		intel_xhci_force_port_xhci(DEVICE_PORT_NUM, data);
-	else if (role == USB_ROLE_DEVICE)
-		intel_xhci_force_port_xdci(DEVICE_PORT_NUM, data);
-	else
-		return -1;
-	return 0;
-	#else
 	/*
 	 * On many CHT devices ACPI event (_AEI) handlers read / modify /
 	 * write the cfg0 register, just like we do. Take the ACPI lock
@@ -334,32 +253,153 @@ static int intel_xhci_usb_set_role(struct usb_role_switch *sw,
 
 	dev_warn(data->dev, "Timeout waiting for role-switch\n");
 	return -ETIMEDOUT;
-	#endif
 }
 
-static enum usb_role intel_xhci_usb_get_role(struct usb_role_switch *sw)
+void intel_xhci_force_port_xhci(struct intel_xhci_usb_data *data)
+{
+	unsigned int port_status, port_ctrl0;
+	unsigned int count;
+	unsigned int val;
+
+	if (data->dap_usb3_switch) {
+		port_status = R_DAP_ESS_PORT_STATUS_REG_0 + data->port * 0x10;
+		port_ctrl0 = R_DAP_ESS_PORT_CONTROL_0_REG_0 + data->port * 0x10;
+	} else {
+		port_status = R_DAP_USB2_PORT_STATUS_REG_0 + data->port * 0x10;
+		port_ctrl0 = R_DAP_USB2_PORT_CONTROL_0_REG_0 + data->port * 0x10;
+	}
+
+	/* SDXPCHVBUS Set by CPU xDCI as USB2 connection in PCH is desired */
+	val = readl(data->base + (R_DAP_USB_COMMON_CONTROL_REG));
+	val &= ~R_DAP_USB_SDXPCHVBUS;
+	writel(val, data->base + (R_DAP_USB_COMMON_CONTROL_REG));
+
+	/* Initiate disconnect event */
+	val = readl(data->base + port_ctrl0);
+	val &= (unsigned int)(~V_PCR_USB_CONNECTOR_EVENT_MASK);
+	val |= V_PCR_USB_DISCONNRCT_CONNECTOR_EVENT;
+	writel(val, data->base + port_ctrl0);
+	/* Poll USB OP Status */
+	for (count = 0x00; count < V_PCR_USB_OP_MAX_TIMEOUT_COUNT; count++) {
+		val = readl(data->base + port_status);
+		val &= V_PCR_USB_OP_STATUS_MASK;
+		/*
+		 * Device:  Poll 0x08 || 0x80 || 0x20
+		 * HOST:    Poll 0x01 || 0x20
+		 * DBC:     Poll 0x40
+		 * Discon:  Poll 0x02 || 0x10
+		 */
+		if (val == V_PCR_USB_OP_STATUS_DISCONNECT)
+			break;
+	}
+	val = readl(data->base + port_ctrl0);
+	val &= ~(V_PCR_USB_CONNECTOR_EVENT_MASK);
+	val |= V_PCR_USB_CONNECTOR_EVENT_HOST;
+	writel(val, data->base + port_ctrl0);
+	/* Poll USB OP Status */
+	for (count = 0x00; count < V_PCR_USB_OP_MAX_TIMEOUT_COUNT; count++) {
+		val = readl(data->base + port_status);
+		val &= V_PCR_USB_OP_STATUS_MASK;
+		/*
+		 * Device:  Poll 0x08 || 0x80 || 0x20
+		 * HOST:    Poll 0x01 || 0x20
+		 * DBC:     Poll 0x40
+		 * Discon:  Poll 0x02 || 0x10
+		 */
+		if ((val == V_PCR_USB_OP_STATUS_HOST) ||
+				(val == V_PCR_USB_OP_STATUS_EXI_BSSB))
+			break;
+	}
+}
+
+static void intel_xhci_force_port_xdci(struct intel_xhci_usb_data *data)
+{
+	unsigned int port_status, port_ctrl0;
+	unsigned int count;
+	unsigned int val;
+
+	if (data->dap_usb3_switch) {
+		port_status = R_DAP_ESS_PORT_STATUS_REG_0 + data->port * 0x10;
+		port_ctrl0 = R_DAP_ESS_PORT_CONTROL_0_REG_0 + data->port * 0x10;
+	} else {
+		port_status = R_DAP_USB2_PORT_STATUS_REG_0 + data->port * 0x10;
+		port_ctrl0 = R_DAP_USB2_PORT_CONTROL_0_REG_0 + data->port * 0x10;
+	}
+
+	/* SDXPCHVBUS Set by CPU xDCI as USB2 connection in PCH is desired */
+	val = readl(data->base + (R_DAP_USB_COMMON_CONTROL_REG));
+	val |= R_DAP_USB_SDXPCHVBUS;
+	writel(val, data->base + (R_DAP_USB_COMMON_CONTROL_REG));
+
+	/* Initiate disconnect event */
+	val = readl(data->base + port_ctrl0);
+	val &= (unsigned int)(~V_PCR_USB_CONNECTOR_EVENT_MASK);
+	val |= V_PCR_USB_DISCONNRCT_CONNECTOR_EVENT;
+	writel(val, data->base + port_ctrl0);
+	/* Poll USB OP Status */
+	for (count = 0x00; count < V_PCR_USB_OP_MAX_TIMEOUT_COUNT; count++) {
+		val = readl(data->base + port_status);
+		val &= V_PCR_USB_OP_STATUS_MASK;
+		/*
+		 * Device:  Poll 0x08 || 0x80 || 0x20
+		 * HOST:    Poll 0x01 || 0x20
+		 * DBC:     Poll 0x40
+		 * Discon:  Poll 0x02 || 0x10
+		 */
+		if (val == V_PCR_USB_OP_STATUS_DISCONNECT)
+			break;
+	}
+
+	val = readl(data->base + port_ctrl0);
+	val &= ~(V_PCR_USB_CONNECTOR_EVENT_MASK);
+	val |= V_PCR_USB_CONNECTOR_EVENT_DEVICE;
+	writel(val, data->base + port_ctrl0);
+	/* Poll USB OP Status */
+	for (count = 0x00; count < V_PCR_USB_OP_MAX_TIMEOUT_COUNT; count++) {
+		val = readl(data->base + port_status);
+		val &= V_PCR_USB_OP_STATUS_MASK;
+		/*
+		 * Device:  Poll 0x08 || 0x80 || 0x20
+		 * HOST:    Poll 0x01 || 0x20
+		 * DBC:     Poll 0x40
+		 * Discon:  Poll 0x02 || 0x10
+		 */
+		if ((val == V_PCR_USB_OP_STATUS_DEVICE) ||
+		(val == V_PCR_USB_OP_STATUS_OV_SUB_DEV) ||
+		(val == V_PCR_USB_OP_STATUS_EXI_BSSB))
+			break;
+	}
+
+	val = readl(data->base + port_ctrl0);
+	val &= (unsigned int)(~V_PCR_USB_SW_VBUS);
+	val |= V_PCR_USB_SW_VBUS;
+	/* Write VBUS bit */
+	writel(val, data->base + port_ctrl0);
+	/* status */
+	val = readl(data->base + port_status);
+}
+
+static int intel_xhci_usb_set_role_dap(struct intel_xhci_usb_data *data,
+				   enum usb_role role)
+{
+	if (role == USB_ROLE_HOST)
+		intel_xhci_force_port_xhci(data);
+	else if (role == USB_ROLE_DEVICE)
+		intel_xhci_force_port_xdci(data);
+	else
+		return -1;
+	return 0;
+}
+
+static int intel_xhci_usb_set_role(struct usb_role_switch *sw,
+				   enum usb_role role)
 {
 	struct intel_xhci_usb_data *data = usb_role_switch_get_drvdata(sw);
-	enum usb_role role;
-	u32 val;
 
-	#ifdef USB_DAP_ENABLED
-	return intel_xhci_get_dap_port_status(DEVICE_PORT_NUM, data);
-	#else
-
-	pm_runtime_get_sync(data->dev);
-	val = readl(data->base + DUAL_ROLE_CFG0);
-	pm_runtime_put(data->dev);
-
-	if (!(val & SW_IDPIN))
-		role = USB_ROLE_HOST;
-	else if (val & SW_VBUS_VALID)
-		role = USB_ROLE_DEVICE;
+	if (data->legacy_drd_switch)
+		return intel_xhci_usb_set_role_drd(data, role);
 	else
-		role = USB_ROLE_NONE;
-
-	return role;
-	#endif
+		return intel_xhci_usb_set_role_dap(data, role);
 }
 
 static int intel_xhci_usb_probe(struct platform_device *pdev)
@@ -383,19 +423,23 @@ static int intel_xhci_usb_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, data);
 
-	ret = software_node_register(&intel_xhci_usb_node);
+	ret = device_create_file(dev, &dev_attr_port);
 	if (ret)
 		return ret;
 
 	sw_desc.set = intel_xhci_usb_set_role,
 	sw_desc.get = intel_xhci_usb_get_role,
 	sw_desc.allow_userspace_control = true,
-	sw_desc.fwnode = software_node_fwnode(&intel_xhci_usb_node);
+	sw_desc.fwnode = dev_fwnode(&pdev->dev);
 	sw_desc.driver_data = data;
 
 	data->dev = dev;
 	data->enable_sw_switch = !device_property_read_bool(dev,
 						"sw_switch_disable");
+	data->legacy_drd_switch = device_property_read_bool(dev,
+						"legacy_drd_switch");
+	data->dap_usb3_switch = device_property_read_bool(dev,
+						"dap_usb3_switch");
 
 	data->role_sw = usb_role_switch_register(dev, &sw_desc);
 	if (IS_ERR(data->role_sw)) {
@@ -416,7 +460,8 @@ static void intel_xhci_usb_remove(struct platform_device *pdev)
 	pm_runtime_disable(&pdev->dev);
 
 	usb_role_switch_unregister(data->role_sw);
-	fwnode_handle_put(software_node_fwnode(&intel_xhci_usb_node));
+
+	device_remove_file(&pdev->dev, &dev_attr_port);
 }
 
 static const struct platform_device_id intel_xhci_usb_table[] = {
