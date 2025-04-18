@@ -416,7 +416,7 @@ static int virtpxp_probe(struct virtio_device *vdev)
 		gdev->vpxp = vpxp;
 	}
 	spin_unlock_irqrestore(&pxp_lock, flags);
-	printk("virtio_pxp:vpxp:%p  device idx:%d, vfid:%d, sessions:%d\n", vpxp, device_idx, device_vfid, sessions);
+	printk("virtio_pxp: init pxp device idx:%d, vfid:%d, sessions:%d\n", device_idx, device_vfid, sessions);
 
 	return 0;
 
