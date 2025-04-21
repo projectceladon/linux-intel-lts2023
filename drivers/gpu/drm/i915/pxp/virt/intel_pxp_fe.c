@@ -118,7 +118,7 @@ static void pxp_fe_session_work(struct work_struct *work)
 	if (!events)
 		return;
 
-	drm_dbg(&pxp_fe->i915->drm, "PXP FE: processing event-flags 0x%08x", events);
+	DRM_ERROR("PXP FE: processing event-flags 0x%08x", events);
 
 	if (events & PXP_INVAL_REQUIRED) {
 		intel_pxp_invalidate(pxp_fe->i915->pxp);
@@ -415,11 +415,14 @@ int intel_pxp_fe_sm_ioctl_query_pxp_tag(struct intel_pxp *pxp,
 	if (!check_session_id(pxp, session_id))
 		return -EINVAL;
 
-	params.pxp_tag = *pxp_tag;
-	ret = virtio_query_tag(pxp->fe.vpxp, &params);
-	*pxp_tag = params.pxp_tag;
-	*session_is_alive = params.session_is_alive;
-	drm_dbg(&pxp->fe.i915->drm, "%s, ret:%d\n",__FUNCTION__,  ret);
+//	params.pxp_tag = *pxp_tag;
+//	ret = virtio_query_tag(pxp->fe.vpxp, &params);
+//	*pxp_tag = params.pxp_tag;
+//	*session_is_alive = params.session_is_alive;
+//	drm_dbg(&pxp->fe.i915->drm, "%s, ret:%d\n",__FUNCTION__,  ret);
+
+	*pxp_tag = pxp->fe.hwdrm_sessions[session_id].tag;
+	*session_is_alive = pxp->fe.hwdrm_sessions[session_id].is_valid;
 	return ret;
 }
 
