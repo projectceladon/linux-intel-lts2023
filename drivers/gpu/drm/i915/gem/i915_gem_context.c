@@ -1711,6 +1711,9 @@ static void gem_context_register(struct i915_gem_context *ctx,
 	snprintf(ctx->name, sizeof(ctx->name), "%s[%d]",
 		 current->comm, pid_nr(ctx->pid));
 
+	if (ctx->client == NULL)
+		return ;
+
 	spin_lock(&ctx->client->ctx_lock);
 	list_add_tail_rcu(&ctx->client_link, &ctx->client->ctx_list);
 	spin_unlock(&ctx->client->ctx_lock);

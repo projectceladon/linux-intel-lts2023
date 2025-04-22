@@ -405,7 +405,7 @@ int i915_gem_create_sysfs_file_entry(struct drm_device *dev,
 		struct drm_i915_file_private *file_priv_local =
 			file_local->driver_priv;
 
-		if (file_priv->tgid == file_priv_local->tgid) {
+		if ((pid_nr(file_priv->tgid) == pid_nr(file_priv_local->tgid)) && (file_priv_local->obj_attr != NULL)) {
 			file_priv->obj_attr = file_priv_local->obj_attr;
 			mutex_unlock(&dev->filelist_mutex);
 			return 0;
@@ -446,6 +446,8 @@ int i915_gem_create_sysfs_file_entry(struct drm_device *dev,
 		DRM_ERROR(
 			"sysfs tgid file setup failed. tgid=%d, process:%s, ret:%d\n",
 			pid_nr(file_priv->tgid), file_priv->process_name, ret);
+		if (ret == -EEXIST)
+			ret = 0;
 		goto out_attr_priv;
 	}
 
@@ -491,6 +493,8 @@ void i915_gem_remove_sysfs_file_entry(struct drm_device *dev,
 		if (WARN_ON(file_priv->obj_attr == NULL))
 			return;
 		attr_priv = file_priv->obj_attr->private;
+		if (attr_priv == NULL)
+			return;
 
 		sysfs_remove_bin_file(&dev_priv->memtrack_kobj,
 				      file_priv->obj_attr);
