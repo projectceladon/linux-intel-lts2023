@@ -982,7 +982,7 @@ static int virtio_camera_setup_vnode(struct virtio_device *vdev,
 
 			vnode->ctr_vqx = &vcam->vqs[vq_idx++];
 
-			err = video_register_device(&vnode->vdev, VFL_TYPE_VIDEO, -1);
+			err = video_register_device(&vnode->vdev, VFL_TYPE_VIRTCAM, -1);
 
 			if (err) {
 				virtio_camera_unregister_devs(vcam, i, j-1);

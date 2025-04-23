@@ -545,13 +545,17 @@ static void determine_valid_ioctls(struct video_device *vdev)
 			      V4L2_CAP_META_OUTPUT;
 	DECLARE_BITMAP(valid_ioctls, BASE_VIDIOC_PRIVATE);
 	const struct v4l2_ioctl_ops *ops = vdev->ioctl_ops;
-	bool is_vid = vdev->vfl_type == VFL_TYPE_VIDEO &&
+	bool is_vid = (vdev->vfl_type == VFL_TYPE_VIDEO ||
+			vdev->vfl_type == VFL_TYPE_UVC ||
+			vdev->vfl_type == VFL_TYPE_VIRTCAM) &&
 		      (vdev->device_caps & vid_caps);
 	bool is_vbi = vdev->vfl_type == VFL_TYPE_VBI;
 	bool is_radio = vdev->vfl_type == VFL_TYPE_RADIO;
 	bool is_sdr = vdev->vfl_type == VFL_TYPE_SDR;
 	bool is_tch = vdev->vfl_type == VFL_TYPE_TOUCH;
-	bool is_meta = vdev->vfl_type == VFL_TYPE_VIDEO &&
+	bool is_meta = (vdev->vfl_type == VFL_TYPE_VIDEO ||
+			vdev->vfl_type == VFL_TYPE_UVC ||
+			vdev->vfl_type == VFL_TYPE_VIRTCAM) &&
 		       (vdev->device_caps & meta_caps);
 	bool is_rx = vdev->vfl_dir != VFL_DIR_TX;
 	bool is_tx = vdev->vfl_dir != VFL_DIR_RX;
@@ -800,6 +804,8 @@ static int video_register_media_controller(struct video_device *vdev)
 	vdev->entity.function = MEDIA_ENT_F_UNKNOWN;
 
 	switch (vdev->vfl_type) {
+	case VFL_TYPE_VIRTCAM:
+	case VFL_TYPE_UVC:
 	case VFL_TYPE_VIDEO:
 		intf_type = MEDIA_INTF_T_V4L_VIDEO;
 		vdev->entity.function = MEDIA_ENT_F_IO_V4L;
@@ -908,6 +914,12 @@ int __video_register_device(struct video_device *vdev,
 
 	/* Part 1: check device type */
 	switch (type) {
+	case VFL_TYPE_VIRTCAM:
+		name_base = "virtvideo";
+		break;
+	case VFL_TYPE_UVC:
+		name_base = "uvcvideo";
+		break;
 	case VFL_TYPE_VIDEO:
 		name_base = "video";
 		break;
@@ -952,6 +964,8 @@ int __video_register_device(struct video_device *vdev,
 	 * of 128-191 and just pick the first free minor there
 	 * (new style). */
 	switch (type) {
+	case VFL_TYPE_VIRTCAM:
+	case VFL_TYPE_UVC:
 	case VFL_TYPE_VIDEO:
 		minor_offset = 0;
 		minor_cnt = 64;
