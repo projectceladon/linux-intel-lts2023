@@ -26,13 +26,13 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include <linux/aperture.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/poll.h>
 #include <linux/wait.h>
 
 #include <drm/drm.h>
-#include <drm/drm_aperture.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_fbdev_generic.h>
@@ -44,8 +44,6 @@
 static const struct drm_driver driver;
 
 static int virtio_gpu_modeset = -1;
-
-MODULE_IMPORT_NS(DMA_BUF);
 
 MODULE_PARM_DESC(modeset, "Disable/Enable modesetting");
 module_param_named(modeset, virtio_gpu_modeset, int, 0400);
@@ -61,7 +59,7 @@ static int virtio_gpu_pci_quirk(struct drm_device *dev)
 		 vga ? "virtio-vga" : "virtio-gpu-pci",
 		 pname);
 	if (vga) {
-		ret = drm_aperture_remove_conflicting_pci_framebuffers(pdev, &driver);
+		ret = aperture_remove_conflicting_pci_devices(pdev, driver.name);
 		if (ret)
 			return ret;
 	}
@@ -117,8 +115,6 @@ static int virtio_gpu_probe(struct virtio_device *vdev)
 		goto err_deinit;
 
 	drm_fbdev_generic_setup(vdev->priv, 32);
-	virtio_gpu_debugfs_late_init(pgpudev);
-
 	return 0;
 
 err_deinit:
@@ -167,14 +163,6 @@ static unsigned int features[] = {
 	VIRTIO_GPU_F_MODIFIER,
 	VIRTIO_GPU_F_SCALING,
 	VIRTIO_GPU_F_VBLANK,
-	VIRTIO_GPU_F_ALLOW_P2P,
-	VIRTIO_GPU_F_FLIP_SEQUENCE,
-	VIRTIO_GPU_F_MULTI_PLANE,
-	VIRTIO_GPU_F_ROTATION,
-	VIRTIO_GPU_F_PIXEL_BLEND_MODE,
-	VIRTIO_GPU_F_MULTI_PLANAR_FORMAT,
-	VIRTIO_GPU_F_HDCP,
-	VIRTIO_GPU_F_PROTECTED_BO,
 };
 
 #ifdef CONFIG_PM_SLEEP
@@ -228,8 +216,6 @@ static int virtgpu_restore(struct virtio_device *vdev)
 		DRM_ERROR("Failed to recover objects\n");
 		return error;
 	}
-	if (vgdev->has_hdcp)
-		virtio_gpu_hdcp_notify(vgdev);
 
 	error = drm_mode_config_helper_resume(dev);
 	if (error) {
@@ -245,7 +231,6 @@ static struct virtio_driver virtio_gpu_driver = {
 	.feature_table = features,
 	.feature_table_size = ARRAY_SIZE(features),
 	.driver.name = KBUILD_MODNAME,
-	.driver.owner = THIS_MODULE,
 	.id_table = id_table,
 	.probe = virtio_gpu_probe,
 	.remove = virtio_gpu_remove,
@@ -278,7 +263,7 @@ static const struct drm_driver driver = {
 	.postclose = virtio_gpu_driver_postclose,
 
 	.dumb_create = virtio_gpu_mode_dumb_create,
-	.dumb_map_offset = virtio_gpu_mode_dumb_mmap,
+//	.dumb_map_offset = virtio_gpu_mode_dumb_mmap,
 
 #if defined(CONFIG_DEBUG_FS)
 	.debugfs_init = virtio_gpu_debugfs_init,
@@ -294,7 +279,6 @@ static const struct drm_driver driver = {
 
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,
-	.date = DRIVER_DATE,
 	.major = DRIVER_MAJOR,
 	.minor = DRIVER_MINOR,
 	.patchlevel = DRIVER_PATCHLEVEL,

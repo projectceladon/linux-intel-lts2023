@@ -23,7 +23,6 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include <linux/dma-buf.h>
 #include <linux/dma-mapping.h>
 #include <linux/moduleparam.h>
 
@@ -55,14 +54,14 @@ int virtio_gpu_resource_id_get(struct virtio_gpu_device *vgdev, uint32_t *resid)
 	return 0;
 }
 
-void virtio_gpu_resource_id_put(struct virtio_gpu_device *vgdev, uint32_t id)
+static void virtio_gpu_resource_id_put(struct virtio_gpu_device *vgdev, uint32_t id)
 {
 	if (!virtio_gpu_virglrenderer_workaround) {
 		ida_free(&vgdev->resource_ida, id - 1);
 	}
 }
 
-void virtio_gpu_object_save_restore_list(struct virtio_gpu_device *vgdev,
+static void virtio_gpu_object_save_restore_list(struct virtio_gpu_device *vgdev,
 						struct virtio_gpu_object *bo,
 						struct virtio_gpu_object_params *params)
 {
@@ -99,6 +98,7 @@ void virtio_gpu_cleanup_object(struct virtio_gpu_object *bo)
 	struct virtio_gpu_device *vgdev = bo->base.base.dev->dev_private;
 
 	virtio_gpu_resource_id_put(vgdev, bo->hw_res_handle);
+	virtio_gpu_object_del_restore_list(vgdev, bo);
 	if (virtio_gpu_is_shmem(bo)) {
 		drm_gem_shmem_free(&bo->base);
 	} else if (virtio_gpu_is_vram(bo)) {
@@ -113,12 +113,10 @@ void virtio_gpu_cleanup_object(struct virtio_gpu_object *bo)
 		drm_gem_free_mmap_offset(&vram->base.base.base);
 		drm_gem_object_release(&vram->base.base.base);
 		kfree(vram);
+	} else {
+		drm_gem_object_release(&bo->base.base);
+		kfree(bo);
 	}
-
-	if (bo->prime)
-		kfree(bo->ents);
-
-	virtio_gpu_object_del_restore_list(vgdev, bo);
 }
 
 static void virtio_gpu_free_object(struct drm_gem_object *obj)
@@ -133,6 +131,27 @@ static void virtio_gpu_free_object(struct drm_gem_object *obj)
 		return;
 	}
 	virtio_gpu_cleanup_object(bo);
+}
+
+int virtio_gpu_detach_object_fenced(struct virtio_gpu_object *bo)
+{
+	struct virtio_gpu_device *vgdev = bo->base.base.dev->dev_private;
+	struct virtio_gpu_fence *fence;
+
+	if (!bo->attached)
+		return 0;
+
+	fence = virtio_gpu_fence_alloc(vgdev, vgdev->fence_drv.context, 0);
+	if (!fence)
+		return -ENOMEM;
+
+	virtio_gpu_object_detach(vgdev, bo, fence);
+	virtio_gpu_notify(vgdev);
+
+	dma_fence_wait(&fence->f, false);
+	dma_fence_put(&fence->f);
+
+	return 0;
 }
 
 static const struct drm_gem_object_funcs virtio_gpu_shmem_funcs = {
@@ -297,17 +316,10 @@ int virtio_gpu_object_restore_all(struct virtio_gpu_device *vgdev)
 	int ret;
 
 	list_for_each_entry_safe(curr, tmp, &vgdev->obj_rec, node) {
-		if (curr->bo->prime) {
-			nents = curr->bo->nents;
-			ents = kmemdup(curr->bo->ents,
-				       nents * sizeof(struct virtio_gpu_mem_entry),
-				       GFP_KERNEL);
-		} else {
-			ret = virtio_gpu_object_shmem_init(vgdev, curr->bo, &ents, &nents);
-			if (ret)
-				break;
-		}
- 
+		ret = virtio_gpu_object_shmem_init(vgdev, curr->bo, &ents, &nents);
+		if (ret)
+			break;
+
 		if (curr->params.blob) {
 			virtio_gpu_cmd_resource_create_blob(vgdev, curr->bo, &curr->params,
 							    ents, nents);

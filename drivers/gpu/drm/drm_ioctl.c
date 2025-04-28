@@ -535,7 +535,7 @@ int drm_version(struct drm_device *dev, void *data,
 
 	if (!err)
 		err = drm_copy_field(version->date, &version->date_len,
-				dev->driver->date);
+				"0");
 	if (!err)
 		err = drm_copy_field(version->desc, &version->desc_len,
 				dev->driver->desc);
