@@ -1221,3 +1221,31 @@ void ttm_bo_tt_destroy(struct ttm_buffer_object *bo)
 	ttm_tt_destroy(bo->bdev, bo->ttm);
 	bo->ttm = NULL;
 }
+int ttm_bo_populate(struct ttm_buffer_object *bo,
+		    struct ttm_operation_ctx *ctx)
+{
+	struct ttm_tt *tt = bo->ttm;
+	bool swapped;
+	int ret;
+
+	dma_resv_assert_held(bo->base.resv);
+
+	if (!tt)
+		return 0;
+
+	swapped = ttm_tt_is_swapped(tt);
+	ret = ttm_tt_populate(bo->bdev, tt, ctx);
+	if (ret)
+		return ret;
+
+	if (swapped && !ttm_tt_is_swapped(tt) && !bo->pin_count &&
+	    bo->resource) {
+		spin_lock(&bo->bdev->lru_lock);
+		ttm_resource_add_bulk_move(bo->resource, bo);
+		ttm_resource_move_to_lru_tail(bo->resource);
+		spin_unlock(&bo->bdev->lru_lock);
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(ttm_bo_populate);

@@ -699,9 +699,11 @@ int drm_buddy_alloc_blocks(struct drm_buddy *mm,
 		return -EINVAL;
 
 	/* Actual range allocation */
-	if (start + size == end)
+	if (start + size == end) {
+		if (!IS_ALIGNED(start | end, min_page_size))
+			return -EINVAL;
 		return __drm_buddy_alloc_range(mm, start, size, blocks);
-
+	}
 	if (!IS_ALIGNED(size, min_page_size))
 		return -EINVAL;
 
