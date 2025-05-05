@@ -27,6 +27,8 @@
 
 #include "virtgpu_drv.h"
 
+MODULE_IMPORT_NS(DMA_BUF);
+
 static int virtgpu_virtio_get_uuid(struct dma_buf *buf,
 				   uuid_t *uuid)
 {
@@ -142,19 +144,162 @@ struct dma_buf *virtgpu_gem_prime_export(struct drm_gem_object *obj,
 	return buf;
 }
 
-struct drm_gem_object *virtgpu_gem_prime_import(struct drm_device *dev,
-						struct dma_buf *dma_buf)
+int virtgpu_dma_buf_import_sgt(struct virtio_gpu_mem_entry **ents,
+			       unsigned int *nents,
+			       struct virtio_gpu_object *bo,
+			       struct dma_buf_attachment *attach)
 {
-	struct drm_gem_object *obj;
-	struct dma_buf_attachment *attach;
+	struct scatterlist *sl;
 	struct sg_table *sgt;
-	struct device *attach_dev = dev->dev;
-	struct virtio_gpu_device *vgdev = dev->dev_private;
-	int ret;
-	bool p2p = false;
+	long i, ret;
 
-	if (dma_buf->ops == &virtgpu_dmabuf_ops.ops) {
-		obj = dma_buf->priv;
+	dma_resv_assert_held(attach->dmabuf->resv);
+
+	ret = dma_resv_wait_timeout(attach->dmabuf->resv,
+				    DMA_RESV_USAGE_KERNEL,
+				    false, MAX_SCHEDULE_TIMEOUT);
+	if (ret <= 0)
+		return ret < 0 ? ret : -ETIMEDOUT;
+
+	sgt = dma_buf_map_attachment(attach, DMA_BIDIRECTIONAL);
+	if (IS_ERR(sgt))
+		return PTR_ERR(sgt);
+
+	*ents = kvmalloc_array(sgt->nents,
+			       sizeof(struct virtio_gpu_mem_entry),
+			       GFP_KERNEL);
+	if (!(*ents)) {
+		dma_buf_unmap_attachment(attach, sgt, DMA_BIDIRECTIONAL);
+		return -ENOMEM;
+	}
+
+	*nents = sgt->nents;
+	for_each_sgtable_dma_sg(sgt, sl, i) {
+		(*ents)[i].addr = cpu_to_le64(sg_dma_address(sl));
+		(*ents)[i].length = cpu_to_le32(sg_dma_len(sl));
+		(*ents)[i].padding = 0;
+	}
+
+	bo->sgt = sgt;
+	return 0;
+}
+
+static void virtgpu_dma_buf_free_obj(struct drm_gem_object *obj)
+{
+	struct virtio_gpu_object *bo = gem_to_virtio_gpu_obj(obj);
+	struct virtio_gpu_device *vgdev = obj->dev->dev_private;
+	struct dma_buf_attachment *attach = obj->import_attach;
+	struct dma_resv *resv = attach->dmabuf->resv;
+
+	if (attach) {
+		dma_resv_lock(resv, NULL);
+
+		virtio_gpu_detach_object_fenced(bo);
+
+		if (bo->sgt)
+			dma_buf_unmap_attachment(attach, bo->sgt,
+						 DMA_BIDIRECTIONAL);
+
+		dma_resv_unlock(resv);
+
+		dma_buf_detach(attach->dmabuf, attach);
+		dma_buf_put(attach->dmabuf);
+	}
+
+	if (bo->created) {
+		virtio_gpu_cmd_unref_resource(vgdev, bo);
+		virtio_gpu_notify(vgdev);
+		return;
+	}
+	virtio_gpu_cleanup_object(bo);
+}
+
+static int virtgpu_dma_buf_init_obj(struct drm_device *dev,
+				    struct virtio_gpu_object *bo,
+				    struct dma_buf_attachment *attach)
+{
+	struct virtio_gpu_device *vgdev = dev->dev_private;
+	struct virtio_gpu_object_params params = { 0 };
+	struct dma_resv *resv = attach->dmabuf->resv;
+	struct virtio_gpu_mem_entry *ents = NULL;
+	unsigned int nents;
+	int ret;
+
+	ret = virtio_gpu_resource_id_get(vgdev, &bo->hw_res_handle);
+	if (ret) {
+		virtgpu_dma_buf_free_obj(&bo->base.base);
+		return ret;
+	}
+
+	dma_resv_lock(resv, NULL);
+
+	ret = dma_buf_pin(attach);
+	if (ret)
+		goto err_pin;
+
+	ret = virtgpu_dma_buf_import_sgt(&ents, &nents, bo, attach);
+	if (ret)
+		goto err_import;
+
+	params.blob = true;
+	params.blob_mem = VIRTGPU_BLOB_MEM_GUEST;
+	params.blob_flags = VIRTGPU_BLOB_FLAG_USE_SHAREABLE;
+	params.size = attach->dmabuf->size;
+
+	virtio_gpu_cmd_resource_create_blob(vgdev, bo, &params,
+					    ents, nents);
+	bo->guest_blob = true;
+	bo->attached = true;
+
+	dma_buf_unpin(attach);
+	dma_resv_unlock(resv);
+
+	return 0;
+
+err_import:
+	dma_buf_unpin(attach);
+err_pin:
+	dma_resv_unlock(resv);
+	virtgpu_dma_buf_free_obj(&bo->base.base);
+	return ret;
+}
+
+static const struct drm_gem_object_funcs virtgpu_gem_dma_buf_funcs = {
+	.free = virtgpu_dma_buf_free_obj,
+};
+
+static void virtgpu_dma_buf_move_notify(struct dma_buf_attachment *attach)
+{
+	struct drm_gem_object *obj = attach->importer_priv;
+	struct virtio_gpu_object *bo = gem_to_virtio_gpu_obj(obj);
+
+	if (bo->created && kref_read(&obj->refcount)) {
+		virtio_gpu_detach_object_fenced(bo);
+
+		if (bo->sgt)
+			dma_buf_unmap_attachment(attach, bo->sgt,
+						 DMA_BIDIRECTIONAL);
+
+		bo->sgt = NULL;
+	}
+}
+
+static const struct dma_buf_attach_ops virtgpu_dma_buf_attach_ops = {
+	.allow_peer2peer = true,
+	.move_notify = virtgpu_dma_buf_move_notify
+};
+
+struct drm_gem_object *virtgpu_gem_prime_import(struct drm_device *dev,
+						struct dma_buf *buf)
+{
+	struct virtio_gpu_device *vgdev = dev->dev_private;
+	struct dma_buf_attachment *attach;
+	struct virtio_gpu_object *bo;
+	struct drm_gem_object *obj;
+	int ret;
+
+	if (buf->ops == &virtgpu_dmabuf_ops.ops) {
+		obj = buf->priv;
 		if (obj->dev == dev) {
 			/*
 			 * Importing dmabuf exported from our own gem increases
@@ -165,182 +310,37 @@ struct drm_gem_object *virtgpu_gem_prime_import(struct drm_device *dev,
 		}
 	}
 
-	if (strcmp(dev->dev->driver->name, "virtio-ivshmem") == 0 ||
-			strcmp(dev->dev->driver->name, "virtio-guest-shm") == 0)
-		return ERR_PTR(-EINVAL);
+	if (!vgdev->has_resource_blob || vgdev->has_virgl_3d)
+		return drm_gem_prime_import(dev, buf);
 
-	if (!dev->driver->gem_prime_import_sg_table)
-		return ERR_PTR(-EINVAL);
+	bo = kzalloc(sizeof(*bo), GFP_KERNEL);
+	if (!bo)
+		return ERR_PTR(-ENOMEM);
 
-	spin_lock(&dma_buf->name_lock);
-	if(vgdev->has_allow_p2p && dma_buf->name) {
-		if(strcmp(dma_buf->name, "p2p") == 0)
-			p2p = true;
+	obj = &bo->base.base;
+	obj->funcs = &virtgpu_gem_dma_buf_funcs;
+	drm_gem_private_object_init(dev, obj, buf->size);
 
-	}
-	spin_unlock(&dma_buf->name_lock);
-
-	attach = ____dma_buf_dynamic_attach(dma_buf, attach_dev,
-					    DMA_BUF_DRIVER_TYPE_ID_VIRTIO_GPU,
-					    0, NULL, NULL, p2p);
-	if (IS_ERR(attach))
+	attach = dma_buf_dynamic_attach(buf, dev->dev,
+					&virtgpu_dma_buf_attach_ops, obj);
+	if (IS_ERR(attach)) {
+		kfree(bo);
 		return ERR_CAST(attach);
-
-	get_dma_buf(dma_buf);
-
-	sgt = dma_buf_map_attachment(attach, DMA_BIDIRECTIONAL);
-	if (IS_ERR(sgt)) {
-		ret = PTR_ERR(sgt);
-		goto fail_detach;
-	}
-
-	obj = dev->driver->gem_prime_import_sg_table(dev, attach, sgt);
-	if (IS_ERR(obj)) {
-		ret = PTR_ERR(obj);
-		goto fail_unmap;
 	}
 
 	obj->import_attach = attach;
-	obj->resv = dma_buf->resv;
+	get_dma_buf(buf);
+
+	ret = virtgpu_dma_buf_init_obj(dev, bo, attach);
+	if (ret < 0)
+		return ERR_PTR(ret);
 
 	return obj;
-
-fail_unmap:
-	dma_buf_unmap_attachment(attach, sgt, DMA_BIDIRECTIONAL);
-fail_detach:
-	dma_buf_detach(dma_buf, attach);
-	dma_buf_put(dma_buf);
-
-	return ERR_PTR(ret);
-}
-
-static int virtio_gpu_sgt_to_mem_entry(struct virtio_gpu_device *vgdev,
-				       struct sg_table *table,
-				       struct virtio_gpu_mem_entry **ents,
-				       unsigned int *nents)
-{
-	struct scatterlist *sg;
-	int si;
-
-	/**
-	 * TODO: We must always use DMA addresses for the following two reasons:
-	 *
-	 * 1. By design we are not allowed to access the struct page backing a
-	 *    scatter list, especially when config DMABUF_DEBUG is turned on in
-	 *    which case the addresses will be mangled by the core.
-	 * 2. DMA addresses are required for dGPU local memory sharing between
-	 *    host and guest.
-	 */
-	const bool use_dma_api = true;
-	if (use_dma_api)
-		*nents = table->nents;
-	else
-		*nents = table->orig_nents;
-
-	*ents = kvmalloc_array(*nents,
-			       sizeof(struct virtio_gpu_mem_entry),
-			       GFP_KERNEL);
-	if (!(*ents)) {
-		DRM_ERROR("failed to allocate ent list\n");
-		return -ENOMEM;
-	}
-
-	if (use_dma_api) {
-		for_each_sgtable_dma_sg(table, sg, si) {
-			(*ents)[si].addr = cpu_to_le64(sg_dma_address(sg));
-			(*ents)[si].length = cpu_to_le32(sg_dma_len(sg));
-			(*ents)[si].padding = 0;
-		}
-	} else {
-		for_each_sgtable_sg(table, sg, si) {
-			(*ents)[si].addr = cpu_to_le64(sg_phys(sg));
-			(*ents)[si].length = cpu_to_le32(sg->length);
-			(*ents)[si].padding = 0;
-		}
-	}
-
-	return 0;
-
 }
 
 struct drm_gem_object *virtgpu_gem_prime_import_sg_table(
 	struct drm_device *dev, struct dma_buf_attachment *attach,
 	struct sg_table *table)
 {
-	size_t size = PAGE_ALIGN(attach->dmabuf->size);
-	struct virtio_gpu_device *vgdev = dev->dev_private;
-	struct virtio_gpu_object_params params = { 0 };
-	struct virtio_gpu_object *bo;
-	struct drm_gem_object *obj;
-	struct virtio_gpu_mem_entry *ents;
-	unsigned int nents;
-	struct dma_buf *dmabuf;
-	struct virtio_gpu_cmd cmd_set;
-	int ret;
-
-	if (!vgdev->has_resource_blob || vgdev->has_virgl_3d) {
-		return ERR_PTR(-ENODEV);
-	}
-
-	obj = drm_gem_shmem_prime_import_sg_table(dev, attach, table);
-	if (IS_ERR(obj)) {
-		return ERR_CAST(obj);
-	}
-
-	bo = gem_to_virtio_gpu_obj(obj);
-	ret = virtio_gpu_resource_id_get(vgdev, &bo->hw_res_handle);
-	if (ret < 0) {
-		return ERR_PTR(ret);
-	}
-
-	ret = virtio_gpu_sgt_to_mem_entry(vgdev, table, &ents, &nents);
-	if (ret != 0) {
-		goto err_put_id;
-	}
-
-	dmabuf = attach->dmabuf;
-	bo->protected = false;
-	if (dmabuf && dmabuf->exp_name &&
-		strcmp(dmabuf->exp_name, "i915_protected") == 0) {
-		bo->protected = true;
-	}
-
-	bo->guest_blob = true;
-	bo->prime = true;
-
-	if (attach->peer2peer)
-		bo->locate = 1;
-
-	params.blob_mem = VIRTGPU_BLOB_MEM_GUEST;
-	params.blob_flags = VIRTGPU_BLOB_FLAG_USE_SHAREABLE;
-	params.blob = true;
-	params.size = size;
-
-	bo->nents = nents;
-	bo->ents = kmemdup(ents, nents * sizeof(struct virtio_gpu_mem_entry),
-			   GFP_KERNEL);
-	if (!bo->ents) {
-	      ret = -ENOMEM;
-	      goto err_free_ents;
-	}
-
-	virtio_gpu_cmd_resource_create_blob(vgdev, bo, &params,
-					    ents, nents);
-	if (vgdev->has_protected_bo && bo->protected) {
-		cmd_set.cmd = VIRTIO_GPU_TUNNEL_CMD_SET_BO_PROTECTION;
-		cmd_set.size = 2;
-		cmd_set.data32[0] = bo->hw_res_handle;
-		cmd_set.data32[1] = bo->protected;
-		virtio_gpu_cmd_send_misc(vgdev, 0, 0, &cmd_set, 1);
-	}
-
-	virtio_gpu_object_save_restore_list(vgdev, bo, &params);
-
-	return obj;
-
-err_free_ents:
-	kvfree(ents);
-err_put_id:
-	virtio_gpu_resource_id_put(vgdev, bo->hw_res_handle);
-	return ERR_PTR(ret);
+	return ERR_PTR(-ENODEV);
 }
