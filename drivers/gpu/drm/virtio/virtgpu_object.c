@@ -99,6 +99,10 @@ void virtio_gpu_cleanup_object(struct virtio_gpu_object *bo)
 	struct virtio_gpu_device *vgdev = bo->base.base.dev->dev_private;
 
 	virtio_gpu_resource_id_put(vgdev, bo->hw_res_handle);
+	if (bo->prime)
+		kfree(bo->ents);
+	virtio_gpu_object_del_restore_list(vgdev, bo);
+
 	if (virtio_gpu_is_shmem(bo)) {
 		drm_gem_shmem_free(&bo->base);
 	} else if (virtio_gpu_is_vram(bo)) {
@@ -114,11 +118,6 @@ void virtio_gpu_cleanup_object(struct virtio_gpu_object *bo)
 		drm_gem_object_release(&vram->base.base.base);
 		kfree(vram);
 	}
-
-	if (bo->prime)
-		kfree(bo->ents);
-
-	virtio_gpu_object_del_restore_list(vgdev, bo);
 }
 
 static void virtio_gpu_free_object(struct drm_gem_object *obj)
