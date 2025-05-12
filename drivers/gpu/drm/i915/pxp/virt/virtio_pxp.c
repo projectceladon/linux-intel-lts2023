@@ -44,10 +44,8 @@ static void virtpxp_recv_events(struct virtqueue *vq)
 	spin_lock_irqsave(&vpxp->event_lock, flags);
 	while ((event = virtqueue_get_buf(vq, &len)) != NULL) {
 		spin_unlock_irqrestore(&vpxp->event_lock, flags);
-		spin_lock_irqsave(&pxp_lock, flags);
 		if (vpxp->irq_recv)
 			vpxp->irq_recv(*event, vpxp->cb_priv);
-		spin_unlock_irqrestore(&pxp_lock, flags);
 		virtpxp_queue_evtbuf(vpxp);
 		spin_lock_irqsave(&vpxp->event_lock, flags);
 	}
@@ -416,7 +414,7 @@ static int virtpxp_probe(struct virtio_device *vdev)
 		gdev->vpxp = vpxp;
 	}
 	spin_unlock_irqrestore(&pxp_lock, flags);
-	printk("virtio_pxp:vpxp:%p  device idx:%d, vfid:%d, sessions:%d\n", vpxp, device_idx, device_vfid, sessions);
+	printk("virtio_pxp: init pxp device idx:%d, vfid:%d, sessions:%d\n", device_idx, device_vfid, sessions);
 
 	return 0;
 

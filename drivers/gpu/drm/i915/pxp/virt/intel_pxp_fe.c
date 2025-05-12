@@ -14,6 +14,8 @@
 #include "intel_pxp_fe.h"
 #include "gt/iov/intel_iov_query.h"
 
+#define PRELIM_DRM_I915_PXP_OP_STATUS_ERROR_RETURN 0xfff
+
 int intel_pxp_fe_sm_ioctl_reserve_session(struct intel_pxp *pxp, struct drm_file *drmfile,
 		int protection_mode, u32 *pxp_tag);
 
@@ -74,7 +76,6 @@ static void event_cb(int event, void *priv)
 	unsigned long flags;
 	if (!pxp)
 		return;
-	printk("PXP FE: event receive: %d\n", event);
 	spin_lock_irqsave(&pxp->fe.irq_lock, flags);
 	pxp->session_events |= event;
 	spin_unlock_irqrestore(&pxp->fe.irq_lock, flags);
@@ -88,7 +89,7 @@ void intel_pxp_fe_terminate(struct intel_pxp *pxp)
 	mutex_lock(&pxp->fe.session_mutex);
 	for (int index = 0; index < INTEL_PXP_MAX_HWDRM_SESSIONS; index++) {
 		if (pxp->fe.hwdrm_sessions[index].index >= 0) {
-			printk("%s, PXP FE: session terminate:%d\n", __FUNCTION__, index);
+			drm_dbg(&pxp->fe.i915->drm, "%s, PXP FE: session terminate:%d\n", __FUNCTION__, index);
 			intel_pxp_fe_sm_ioctl_terminate_session(pxp, pxp->fe.hwdrm_sessions[index].drmfile, index);
 		}
 	}
@@ -116,7 +117,7 @@ static void pxp_fe_session_work(struct work_struct *work)
 	if (!events)
 		return;
 
-	//printk("PXP FE: processing event-flags 0x%08x", events);
+	drm_info(&pxp_fe->i915->drm, "PXP FE: processing event-flags 0x%08x", events);
 
 	if (events & PXP_INVAL_REQUIRED) {
 		intel_pxp_invalidate(pxp_fe->i915->pxp);
@@ -143,7 +144,7 @@ int pxp_bind(void *gpu_priv, void *pxp_priv)
 	struct virtio_pxp *vpxp = (struct virtio_pxp *)pxp_priv;
 	if (!pxp || !vpxp)
 		return -1;
-	printk("%s\n", __FUNCTION__);
+	trace_printk("%s\n", __FUNCTION__);
 	pxp->fe.vpxp = vpxp;
 	pxp->fe.enabled = true;
 	pxp->fe.max_sessions = vpxp->sessions;
@@ -159,7 +160,7 @@ void pxp_unbind(void *gpu_priv)
 	struct intel_pxp *pxp = (struct intel_pxp *)gpu_priv;
 	if (!pxp)
 		return;
-	printk("%s\n", __FUNCTION__);
+	trace_printk("%s\n", __FUNCTION__);
 	pxp->fe.enabled = false;
 }
 
@@ -256,7 +257,7 @@ int intel_pxp_fe_start(struct intel_pxp *pxp)
 		return 0;
 	if (intel_pxp_is_active(pxp))
 		return 0;
-	printk("%s\n", __FUNCTION__);
+	DRM_INFO("%s\n", __FUNCTION__);
 	pxp_key_instance_update(pxp);
 
 	pxp->fe.active = true;
@@ -270,7 +271,7 @@ void intel_pxp_fe_end(struct intel_pxp *pxp)
 		return;
 	if (!intel_pxp_is_active(pxp))
 		return ;
-	printk("%s\n", __FUNCTION__);
+	DRM_INFO("%s\n", __FUNCTION__);
 	flush_work(&pxp->fe.session_work);
 	pxp->fe.active = false;
 }
@@ -310,7 +311,7 @@ int intel_pxp_fe_sm_ioctl_reserve_session(struct intel_pxp *pxp, struct drm_file
 		int protection_mode, u32 *pxp_tag)
 {
 	int ret = 0;
-	int session_id = 0;
+	int session_id = -1;
 	struct prelim_drm_i915_pxp_set_session_status_params params;
 	memset(&params, 0, sizeof(params));
 	if (!drmfile || !pxp_tag || pxp->fe.avail_sessions <= 0)
@@ -320,9 +321,11 @@ int intel_pxp_fe_sm_ioctl_reserve_session(struct intel_pxp *pxp, struct drm_file
 	ret = virtio_set_session(pxp->fe.vpxp, &params);
 	*pxp_tag = params.pxp_tag;
 	session_id = *pxp_tag & PRELIM_DRM_I915_PXP_TAG_SESSION_ID_MASK;
-	//printk("%s, session_id:%d, ret:%d\n",__FUNCTION__, session_id, ret);
-	if (session_id >= INTEL_PXP_MAX_HWDRM_SESSIONS || session_id < 0) {
-		DRM_ERROR("PXP FE: invalid session id:%d", session_id);
+	drm_dbg(&pxp->fe.i915->drm, "%s, session_id:%d, ret:%d\n",__FUNCTION__, session_id, ret);
+	if (session_id >= INTEL_PXP_MAX_HWDRM_SESSIONS || session_id < 0 || ret != 0) {
+		DRM_ERROR("PXP FE: invalid session id:%d, ret:%d", session_id, ret);
+		if (ret > 0)
+			return ret;
 		return -1;
 	}
 	pxp->fe.avail_sessions--;
@@ -349,10 +352,9 @@ int intel_pxp_fe_sm_ioctl_mark_session_in_play(struct intel_pxp *pxp,
 	params.pxp_tag = session_id;
 	params.req_session_state = PRELIM_DRM_I915_PXP_REQ_SESSION_IN_PLAY;
 	ret = virtio_set_session(pxp->fe.vpxp, &params);
-	//printk("%s, session_id:%d, ret:%d\n",__FUNCTION__, session_id, ret);
-	if (ret < 0)
-		return ret;
-	pxp->fe.hwdrm_sessions[session_id].is_valid = true;
+	drm_dbg(&pxp->fe.i915->drm, "%s, session_id:%d, ret:%d\n",__FUNCTION__, session_id, ret);
+	if (!ret)
+		pxp->fe.hwdrm_sessions[session_id].is_valid = true;
 	return ret;
 }
 
@@ -367,14 +369,14 @@ int intel_pxp_fe_sm_ioctl_terminate_session(struct intel_pxp *pxp,
 		return -EINVAL;
 	if (!check_session_id(pxp, session_id))
 		return -EINVAL;
+	params.pxp_tag = session_id;
+	params.req_session_state = PRELIM_DRM_I915_PXP_REQ_SESSION_TERMINATE;
+	ret = virtio_set_session(pxp->fe.vpxp, &params);
+	drm_dbg(&pxp->fe.i915->drm, "%s, session_id:%d, ret:%d\n",__FUNCTION__, session_id, ret);
 	pxp->fe.hwdrm_sessions[session_id].is_valid = false;
 	pxp->fe.hwdrm_sessions[session_id].index = -1;
 	pxp->fe.hwdrm_sessions[session_id].drmfile = NULL;
 	pxp->fe.avail_sessions++;
-	params.pxp_tag = session_id;
-	params.req_session_state = PRELIM_DRM_I915_PXP_REQ_SESSION_TERMINATE;
-	ret = virtio_set_session(pxp->fe.vpxp, &params);
-	//printk("%s, session_id:%d, ret:%d\n",__FUNCTION__, session_id, ret);
 	return ret;
 }
 
@@ -394,7 +396,7 @@ int intel_pxp_fe_io_message(struct intel_pxp *pxp,
 	params.msg_out = (u64)msg_out;
 	params.msg_out_buf_size = msg_out_max_size;
 	ret = virtio_io_msg(pxp->fe.vpxp, &params);
-	//printk("%s, ret:%d, ret size:%d\n",__FUNCTION__,  ret, params.msg_out_ret_size);
+	drm_dbg(&pxp->fe.i915->drm, "%s, ret:%d, ret size:%d\n",__FUNCTION__,  ret, params.msg_out_ret_size);
 	*msg_out_rcv_size = params.msg_out_ret_size;
 	return ret;
 }
@@ -416,7 +418,7 @@ int intel_pxp_fe_sm_ioctl_query_pxp_tag(struct intel_pxp *pxp,
 	ret = virtio_query_tag(pxp->fe.vpxp, &params);
 	*pxp_tag = params.pxp_tag;
 	*session_is_alive = params.session_is_alive;
-	//printk("%s, ret:%d\n",__FUNCTION__,  ret);
+	drm_dbg(&pxp->fe.i915->drm, "%s, ret:%d\n",__FUNCTION__,  ret);
 	return ret;
 }
 
@@ -431,6 +433,7 @@ int intel_pxp_fe_gsccs_get_client_host_session_handle(struct intel_pxp *pxp, str
 	params.request_type = request_type;
 	ret = virtio_host_session_handle_request(pxp->fe.vpxp, &params);
 	*host_session_handle = params.host_session_handle;
+	drm_dbg(&pxp->fe.i915->drm, "%s, ret:%d\n",__FUNCTION__,  ret);
 	return ret;
 }
 
@@ -467,6 +470,10 @@ static int pxp_fe_set_session_status(struct intel_pxp *pxp,
 		default:
 			ret = -EINVAL;
 	}
+	if (ret == PRELIM_DRM_I915_PXP_OP_STATUS_ERROR_RETURN)
+		ret = -1;
+	drm_dbg(&pxp->fe.i915->drm, "set fe pxp session status (req %d ret %d)\n",
+				params.req_session_state, ret);
 
 	if (ret >= 0) {
 		pxp_ops->status = ret;
@@ -475,6 +482,9 @@ static int pxp_fe_set_session_status(struct intel_pxp *pxp,
 			ret = -EFAULT;
 		else
 			ret = 0;
+	} else {
+		DRM_ERROR("Failed to set fe pxp session status (req %d ret%d)\n",
+				params.req_session_state, ret);
 	}
 
 	return ret;
@@ -523,7 +533,7 @@ intel_pxp_fe_ioctl_io_message(struct intel_pxp *pxp, struct drm_file *drmfile,
 			&params->msg_out_ret_size);
 
 	if (ret) {
-		drm_dbg(&i915->drm, "Failed to send/receive user TEE message\n");
+		drm_dbg(&i915->drm, "Failed to send/receive user TEE message, ret:%d\n", ret);
 		goto end;
 	}
 
@@ -691,7 +701,7 @@ void intel_pxp_fe_close(struct intel_pxp *pxp, struct drm_file *drmfile)
 	mutex_lock(&pxp->fe.session_mutex);
 	for (index = 0; index < INTEL_PXP_MAX_HWDRM_SESSIONS; index++) {
 		if (pxp->fe.hwdrm_sessions[index].index >= 0 && (pxp->fe.hwdrm_sessions[index].drmfile == drmfile)) {
-			printk("%s, PXP FE: session terminate:%d\n", __FUNCTION__, index);
+			drm_dbg(&pxp->fe.i915->drm, "%s, PXP FE: session terminate:%d\n", __FUNCTION__, index);
 			intel_pxp_fe_sm_ioctl_terminate_session(pxp, pxp->fe.hwdrm_sessions[index].drmfile, index);
 		}
 	}
