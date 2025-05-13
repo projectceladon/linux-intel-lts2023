@@ -144,9 +144,9 @@ static int virtio_gpu_check_plane_rotation(struct drm_plane_state *state,
 						struct virtio_gpu_output *output)
 {
 	int index;
-	index = state->plane->index;
+	index = state->plane->index - output->plane_idx_offset;
 
-	if(!(state->rotation & output->rotation[index])) {
+	if (index < 0 || !(state->rotation & output->rotation[index])) {
 		DRM_DEBUG("sprite plane rotation check failed \n");
 		return -EINVAL;
 	}
@@ -392,6 +392,7 @@ static void virtio_gpu_resource_flush_sprite(struct drm_plane *plane, int indx,
 	struct virtio_gpu_fence *fence = NULL;
 	uint32_t resource_id[4];
 	int i, cnt=0;
+	int plane_index = 0;
 
 	vgfb = to_virtio_gpu_framebuffer(plane->state->fb);
 	fence = virtio_gpu_fence_alloc(vgdev, vgdev->fence_drv.context, 0);
@@ -422,7 +423,8 @@ static void virtio_gpu_resource_flush_sprite(struct drm_plane *plane, int indx,
 		}
 	}
 
-	virtio_gpu_cmd_resource_flush_sprite(vgdev, indx, plane->index,fb,
+	plane_index = plane->index - vgdev->outputs[indx].plane_idx_offset;
+	virtio_gpu_cmd_resource_flush_sprite(vgdev, indx, plane_index, fb,
 			resource_id, cnt, x, y, width, height, objs, fence);
 
 	virtio_gpu_notify(vgdev);
@@ -448,6 +450,7 @@ static void virtio_gpu_sprite_plane_update(struct drm_plane *plane,
 	struct virtio_gpu_output *output = NULL;
 	struct virtio_gpu_cmd cmd_set[3];
 	int cnt = 0;
+	int plane_index = 0;
 
 	if (plane->state->crtc)
 		output = drm_crtc_to_virtio_gpu_output(plane->state->crtc);
@@ -486,7 +489,8 @@ static void virtio_gpu_sprite_plane_update(struct drm_plane *plane,
 	}
 
 	if(cnt) {
-		virtio_gpu_cmd_send_misc(vgdev, output->index, plane->index, cmd_set, cnt);
+		plane_index = plane->index - output->plane_idx_offset;
+		virtio_gpu_cmd_send_misc(vgdev, output->index, plane_index, cmd_set, cnt);
 	}
 	virtio_gpu_resource_flush_sprite(plane,
 				  output->index,
@@ -609,7 +613,7 @@ static void virtio_gpu_primary_plane_update(struct drm_plane *plane,
 		cnt++;
 	}
 	if(cnt) {
-		virtio_gpu_cmd_send_misc(vgdev, output->index, plane->index, cmd_set, cnt);
+		virtio_gpu_cmd_send_misc(vgdev, output->index, 0, cmd_set, cnt);
 	}
 
 	virtio_gpu_resource_flush(plane,
@@ -785,6 +789,7 @@ struct drm_plane *virtio_gpu_plane_init(struct virtio_gpu_device *vgdev,
 	struct drm_plane *plane;
 	const uint32_t *formats;
 	int nformats;
+	int plane_index = 0;
 
 	if (type == DRM_PLANE_TYPE_CURSOR) {
 		formats = virtio_gpu_cursor_formats;
@@ -820,16 +825,24 @@ struct drm_plane *virtio_gpu_plane_init(struct virtio_gpu_device *vgdev,
 						   1 << index, &virtio_gpu_plane_funcs,
 						   formats, nformats, NULL, type, NULL);
 	}
+	if (vgdev->outputs[index].plane_idx_offset < 0) {
+		vgdev->outputs[index].plane_idx_offset = plane->index;
+	}
 
 	if (vgdev->has_rotation) {
-		vgdev->outputs[index].rotation[plane->index] = 0;
-		virtio_gpu_get_plane_rotation(vgdev, plane->index, index);
-		vgdev->outputs[index].rotation[plane->index] =
-			DRM_MODE_ROTATE_0|vgdev->outputs[index].rotation[plane->index];
+		plane_index = plane->index - vgdev->outputs[index].plane_idx_offset;
+		WARN_ON(plane_index < 0);
+		if (plane_index < 0) {
+			return NULL;
+		}
+		vgdev->outputs[index].rotation[plane_index] = 0;
+		virtio_gpu_get_plane_rotation(vgdev, plane_index, index);
+		vgdev->outputs[index].rotation[plane_index] =
+			DRM_MODE_ROTATE_0|vgdev->outputs[index].rotation[plane_index];
 
 		drm_plane_create_rotation_property(plane,
 						   DRM_MODE_ROTATE_0,
-						   vgdev->outputs[index].rotation[plane->index]);
+						   vgdev->outputs[index].rotation[plane_index]);
 	}
 
 	if(vgdev->has_pixel_blend_mode) {

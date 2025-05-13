@@ -403,6 +403,7 @@ static int vgdev_output_init(struct virtio_gpu_device *vgdev, int index)
 		output->info.r.width = cpu_to_le32(XRES_DEF);
 		output->info.r.height = cpu_to_le32(YRES_DEF);
 	}
+	output->plane_idx_offset = -1;
 
 	if(vgdev->has_scaling)
 		output->scaler_users = 0;

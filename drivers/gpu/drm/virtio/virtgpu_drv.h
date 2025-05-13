@@ -215,6 +215,7 @@ struct virtio_gpu_output {
 	int cur_y;
 	bool needs_modeset;
 	int plane_num;
+	int plane_idx_offset;
 	uint64_t rotation[VIRTIO_GPU_MAX_PLANES];
 	unsigned scaler_users;
 	struct virtio_gpu_hdcp hdcp;
