@@ -572,6 +572,7 @@ struct page **drm_gem_get_pages(struct drm_gem_object *obj)
 			if (IS_ERR(p))
 				goto fail;
 			pages[i] = p;
+			i++;
 		} else {
 			long nr;
 			folio = shmem_read_folio_gfp(mapping, i,
@@ -597,7 +598,13 @@ fail:
 	mapping_clear_unevictable(mapping);
 	if (strcmp(obj->dev->dev->driver->name, "virtio-ivshmem") == 0 ||
 		strcmp(obj->dev->dev->driver->name, "virtio-guest-shm") == 0) {
-		virtio_shmem_free_page(obj->dev->dev, pages[i]);
+		j = 0;
+		while (j < i) {
+			virtio_shmem_free_page(obj->dev->dev, pages[j]);
+			j++;
+		}
+		kvfree(pages);
+		return ERR_CAST(p);
 	} else {
 		folio_batch_init(&fbatch);
 		j = 0;
@@ -609,10 +616,9 @@ fail:
 		}
 		if (fbatch.nr)
 			drm_gem_check_release_batch(&fbatch);
+		kvfree(pages);
+		return ERR_CAST(folio);
 	}
-
-	kvfree(pages);
-	return ERR_CAST(folio);
 }
 EXPORT_SYMBOL(drm_gem_get_pages);
 
