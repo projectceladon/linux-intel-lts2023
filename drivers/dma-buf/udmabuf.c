@@ -323,8 +323,8 @@ static long udmabuf_create(struct miscdevice *device,
 					ret = PTR_ERR(page);
 					goto err;
 				}
-				ubuf->pages[pgbuf++] = page;
 			}
+			ubuf->pages[pgbuf++] = page;
 		}
 		fput(memfd);
 		memfd = NULL;
