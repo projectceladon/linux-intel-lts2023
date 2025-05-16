@@ -183,6 +183,8 @@ static int virtgpu_freeze(struct virtio_device *vdev)
 	struct drm_device *dev = vdev->priv;
 	struct virtio_gpu_device *vgdev = dev->dev_private;
 	int error;
+	void *buf;
+	int i = 0;
 
 	error = drm_mode_config_helper_suspend(dev);
 	if (error) {
@@ -190,12 +192,31 @@ static int virtgpu_freeze(struct virtio_device *vdev)
 		return error;
 	}
 
+	if(vgdev->has_vblank) {
+		for(i = 0; i < vgdev->num_vblankq; i++)
+			virtqueue_disable_cb(vgdev->vblank[i].vblank.vq);
+	}
+	virtqueue_disable_cb(vgdev->ctrlq.vq);
+	virtqueue_disable_cb(vgdev->cursorq.vq);
+	if (vgdev->has_hdcp)
+		virtqueue_disable_cb(vgdev->hdcpq.vq);
 	flush_work(&vgdev->obj_free_work);
 	flush_work(&vgdev->ctrlq.dequeue_work);
 	flush_work(&vgdev->cursorq.dequeue_work);
+	if (vgdev->has_hdcp)
+		flush_work(&vgdev->hdcpq.dequeue_work);
 	flush_work(&vgdev->config_changed_work);
 
 	virtio_reset_device(vdev);
+
+	if(vgdev->has_vblank) {
+		for(i = 0; i < vgdev->num_vblankq; i++) {
+			while ((buf = virtqueue_detach_unused_buf(vgdev->vblank[i].vblank.vq))
+					!= NULL) {
+			}
+		}
+	}
+
 	vdev->config->del_vqs(vdev);
 
 	return 0;
@@ -215,14 +236,11 @@ static int virtgpu_restore(struct virtio_device *vdev)
 
 	virtio_device_ready(vdev);
 
-
 	if(vgdev->has_vblank) {
-		virtio_gpu_vblankq_notify(vgdev);
-
 		for(i = 0; i < vgdev->num_vblankq; i++)
 			virtqueue_disable_cb(vgdev->vblank[i].vblank.vq);
+		virtio_gpu_vblankq_notify(vgdev);
 	}
-
 
 	error = virtio_gpu_object_restore_all(vgdev);
 	if (error) {

@@ -383,13 +383,12 @@ int virtio_gpu_init(struct virtio_device *vdev, struct drm_device *dev)
 		goto err_scanouts;
 	}
 
-	virtio_gpu_vblankq_notify(vgdev);
-	if (vgdev->has_hdcp)
-		virtio_gpu_hdcp_notify(vgdev);
-
 	for(i=0; i < vgdev->num_vblankq; i++)
 		virtqueue_disable_cb(vgdev->vblank[i].vblank.vq);
+	virtio_gpu_vblankq_notify(vgdev);
 
+	if (vgdev->has_hdcp)
+		virtio_gpu_hdcp_notify(vgdev);
 
 	if (vgdev->num_scanouts) {
 		if (vgdev->has_edid)
@@ -427,6 +426,8 @@ void virtio_gpu_deinit(struct drm_device *dev)
 	flush_work(&vgdev->obj_free_work);
 	flush_work(&vgdev->ctrlq.dequeue_work);
 	flush_work(&vgdev->cursorq.dequeue_work);
+	if (vgdev->has_hdcp)
+		flush_work(&vgdev->hdcpq.dequeue_work);
 	flush_work(&vgdev->config_changed_work);
 	virtio_reset_device(vgdev->vdev);
 	vgdev->vdev->config->del_vqs(vgdev->vdev);
