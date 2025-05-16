@@ -542,8 +542,9 @@ virtio_gpu_wait_for_vblanks(struct drm_device *dev,
 						drm_crtc_vblank_count(crtc)),
 				msecs_to_jiffies(100));
 
-		WARN(!ret, "[CRTC:%d:%s] vblank wait timed out\n",
-		     crtc->base.id, crtc->name);
+		if (!ret)
+			drm_err(dev, "[CRTC:%d:%s] vblank wait timed out\n",
+				crtc->base.id, crtc->name);
 
 		drm_crtc_vblank_put(crtc);
 	}
