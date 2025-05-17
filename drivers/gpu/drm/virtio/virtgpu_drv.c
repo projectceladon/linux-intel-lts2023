@@ -240,6 +240,36 @@ static int virtgpu_restore(struct virtio_device *vdev)
 
 	return 0;
 }
+
+static int virtgpu_suspend(struct virtio_device *vdev)
+{
+	struct drm_device *dev = vdev->priv;
+	int error;
+
+	error = drm_mode_config_helper_suspend(dev);
+	if (error) {
+		DRM_ERROR("suspend error %d\n", error);
+		return error;
+	}
+
+	return 0;
+}
+
+static int virtgpu_resume(struct virtio_device *vdev)
+{
+	struct drm_device *dev = vdev->priv;
+	struct virtio_gpu_device *vgdev = dev->dev_private;
+	int error;
+
+	error = drm_mode_config_helper_resume(dev);
+	if (error) {
+		DRM_ERROR("resume error %d\n", error);
+		return error;
+	}
+
+	return 0;
+}
+
 #endif
 
 static struct virtio_driver virtio_gpu_driver = {
@@ -252,8 +282,8 @@ static struct virtio_driver virtio_gpu_driver = {
 	.remove = virtio_gpu_remove,
 	.config_changed = virtio_gpu_config_changed,
 #ifdef CONFIG_PM_SLEEP
-	.freeze = virtgpu_freeze,
-	.restore = virtgpu_restore,
+	.freeze = virtgpu_suspend,
+	.restore = virtgpu_resume,
 #endif
 };
 
