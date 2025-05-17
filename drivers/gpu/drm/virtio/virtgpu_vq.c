@@ -549,9 +549,10 @@ static int virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *vgdev,
 void virtio_gpu_vblankq_notify(struct virtio_gpu_device *vgdev)
 {
 	int size,i;
+	unsigned long irqflags;
 
 	for(i=0; i < vgdev->num_vblankq; i++) {
-		spin_lock(&vgdev->vblank[i].vblank.qlock);
+		spin_lock_irqsave(&vgdev->vblank[i].vblank.qlock, irqflags);
 
 		size = virtqueue_get_vring_size(vgdev->vblank[i].vblank.vq);
 		if (size > ARRAY_SIZE(vgdev->vblank[i].buf))
@@ -561,7 +562,7 @@ void virtio_gpu_vblankq_notify(struct virtio_gpu_device *vgdev)
 
 		virtqueue_kick(vgdev->vblank[i].vblank.vq);
 
-		spin_unlock(&vgdev->vblank[i].vblank.qlock);
+		spin_unlock_irqrestore(&vgdev->vblank[i].vblank.qlock, irqflags);
 
 	}
 
