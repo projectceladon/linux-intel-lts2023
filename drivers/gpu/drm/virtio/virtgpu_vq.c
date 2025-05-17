@@ -345,11 +345,11 @@ void virtio_gpu_dequeue_hdcp_func(struct work_struct *work)
 	struct virtio_gpu_output *output;
 	struct drm_connector *connector;
 	unsigned int value = 0;
-	unsigned long irqflags;
 
-	spin_lock_irqsave(&vgdev->hdcpq.qlock, irqflags);
+	printk("bosheng hdcp workqueue\n");
+	spin_lock(&vgdev->hdcpq.qlock);
 	ret_value = virtqueue_get_buf(vgdev->hdcpq.vq, &len);
-	spin_unlock_irqrestore(&vgdev->hdcpq.qlock, irqflags);
+	spin_unlock(&vgdev->hdcpq.qlock);
 	if (ret_value->id >= 0 && ret_value->id < VIRTIO_GPU_MAX_SCANOUTS) {
 		value = ret_value->value;
 		output = &vgdev->outputs[ret_value->id];

@@ -193,6 +193,7 @@ static int virtgpu_freeze(struct virtio_device *vdev)
 	flush_work(&vgdev->obj_free_work);
 	flush_work(&vgdev->ctrlq.dequeue_work);
 	flush_work(&vgdev->cursorq.dequeue_work);
+	flush_work(&vgdev->hdcpq.dequeue_work);
 	flush_work(&vgdev->config_changed_work);
 
 	virtio_reset_device(vdev);
