@@ -293,6 +293,8 @@ void virtio_gpu_dequeue_ctrl_func(struct work_struct *work)
 	struct virtio_gpu_ctrl_hdr *resp;
 	u64 fence_id;
 
+	if (vgdev->freeze)
+		DRM_ERROR("bosheng dequeue in freeze\n");
 	INIT_LIST_HEAD(&reclaim_list);
 	spin_lock(&vgdev->ctrlq.qlock);
 	do {
@@ -347,6 +349,8 @@ void virtio_gpu_dequeue_hdcp_func(struct work_struct *work)
 	unsigned int value = 0;
 	unsigned long irqflags;
 
+	if (vgdev->freeze)
+		return;
 	spin_lock_irqsave(&vgdev->hdcpq.qlock, irqflags);
 	ret_value = virtqueue_get_buf(vgdev->hdcpq.vq, &len);
 	spin_unlock_irqrestore(&vgdev->hdcpq.qlock, irqflags);
@@ -374,6 +378,8 @@ void virtio_gpu_dequeue_cursor_func(struct work_struct *work)
 	struct list_head reclaim_list;
 	struct virtio_gpu_vbuffer *entry, *tmp;
 
+	if (vgdev->freeze)
+		return;
 	INIT_LIST_HEAD(&reclaim_list);
 	spin_lock(&vgdev->cursorq.qlock);
 	do {

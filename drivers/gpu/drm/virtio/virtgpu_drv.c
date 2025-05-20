@@ -118,6 +118,7 @@ static int virtio_gpu_probe(struct virtio_device *vdev)
 
 	drm_fbdev_generic_setup(vdev->priv, 32);
 	virtio_gpu_debugfs_late_init(pgpudev);
+	pgpudev->freeze = 0;
 
 	return 0;
 
@@ -191,15 +192,8 @@ static int virtgpu_freeze(struct virtio_device *vdev)
 		DRM_ERROR("suspend error %d\n", error);
 		return error;
 	}
+	vgdev->freeze = 1;
 
-	if(vgdev->has_vblank) {
-		for(i = 0; i < vgdev->num_vblankq; i++)
-			virtqueue_disable_cb(vgdev->vblank[i].vblank.vq);
-	}
-	virtqueue_disable_cb(vgdev->ctrlq.vq);
-	virtqueue_disable_cb(vgdev->cursorq.vq);
-	if (vgdev->has_hdcp)
-		virtqueue_disable_cb(vgdev->hdcpq.vq);
 	flush_work(&vgdev->obj_free_work);
 	flush_work(&vgdev->ctrlq.dequeue_work);
 	flush_work(&vgdev->cursorq.dequeue_work);
@@ -235,6 +229,7 @@ static int virtgpu_restore(struct virtio_device *vdev)
 	}
 
 	virtio_device_ready(vdev);
+	vgdev->freeze = 0;
 
 	if(vgdev->has_vblank) {
 		for(i = 0; i < vgdev->num_vblankq; i++)
