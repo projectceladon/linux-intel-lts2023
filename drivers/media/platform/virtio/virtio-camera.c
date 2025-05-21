@@ -149,6 +149,7 @@ static void virtio_camera_control_ack(struct virtqueue *vq)
 	struct vb2_v4l2_buffer *vbuf;
 	unsigned int len;
 
+	pr_err("virtio-camera: %s enter and wait vcam_vq->lock\n", __func__);
 	spin_lock_irq(&vcam_vq->lock);
 	while ((req = virtqueue_get_buf(vq, &len))) {
 		complete(&req->completion);
@@ -158,14 +159,18 @@ static void virtio_camera_control_ack(struct virtqueue *vq)
 			vbuf->sequence = req->resp.u.buffer.sequence;
 			vbuf->vb2_buf.timestamp = req->resp.u.buffer.timestamp;
 			vbuf->planes[0].bytesused = req->resp.u.format.size.sizeimage;
+			pr_err("virtio-camera: %s enter and call vb2_buffer_done\n", __func__);
 			vb2_buffer_done(req->vb, VB2_BUF_STATE_DONE);
-			pr_debug("virtio-camera: mark the buffer done. UUID is %d, ptr is %pK\n",
+			pr_err("virtio-camera: mark the buffer done. UUID is %d, ptr is %p\n",
 			req->resp.u.buffer.uuid[0] + req->resp.u.buffer.uuid[1], req->vb);
 
 			kfree(req);
+		} else {
+			pr_err("virtio-camera:%s req->vb is null\n", __func__);
 		}
 	}
 	spin_unlock_irq(&vcam_vq->lock);
+	pr_err("virtio-camera: %s %d unblock vcam_vq->lock\n", __func__, __LINE__);
 }
 
 static int vcam_vq_request(struct virtio_camera_video *vnode,
@@ -195,11 +200,13 @@ static int vcam_vq_request(struct virtio_camera_video *vnode,
 	if (ret) {
 		pr_err("%s: fail to add req to vq, errno is %d\n", __func__, ret);
 		spin_unlock_irq(&vnode->ctr_vqx->lock);
+		pr_err("virtio-camera: %s %d unblock vcam_vq->lock\n", __func__, __LINE__);
 		return ret;
 	}
 
 	virtqueue_kick(vnode->ctr_vqx->vq);
 	spin_unlock_irq(&vnode->ctr_vqx->lock);
+	pr_err("virtio-camera: %s %d unblock vcam_vq->lock\n", __func__, __LINE__);
 
 	if (async)
 		return 0;

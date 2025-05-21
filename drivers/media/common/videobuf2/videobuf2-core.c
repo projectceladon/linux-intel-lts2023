@@ -1052,6 +1052,8 @@ void vb2_buffer_done(struct vb2_buffer *vb, enum vb2_buffer_state state)
 
 	if (WARN_ON(vb->state != VB2_BUF_STATE_ACTIVE))
 		return;
+	else
+		pr_err("vb2_buffer_done Enter, vb->state %d\n", vb->state);
 
 	if (WARN_ON(state != VB2_BUF_STATE_DONE &&
 		    state != VB2_BUF_STATE_ERROR &&
@@ -1074,10 +1076,12 @@ void vb2_buffer_done(struct vb2_buffer *vb, enum vb2_buffer_state state)
 	spin_lock_irqsave(&q->done_lock, flags);
 	if (state == VB2_BUF_STATE_QUEUED) {
 		vb->state = VB2_BUF_STATE_QUEUED;
+		pr_err("vb2_buffer_done doesn't add, vb->state %d\n", vb->state);
 	} else {
 		/* Add the buffer to the done buffers list */
 		list_add_tail(&vb->done_entry, &q->done_list);
 		vb->state = state;
+		pr_err("vb2_buffer_done list_add_tail, vb->state %d\n", vb->state);
 	}
 	atomic_dec(&q->owned_by_drv_count);
 
@@ -2490,9 +2494,15 @@ __poll_t vb2_core_poll(struct vb2_queue *q, struct file *file,
 	poll_wait(file, &q->done_wq, wait);
 
 	if (!q->is_output && !(req_events & (EPOLLIN | EPOLLRDNORM)))
+	{
+		pr_err("vb2_core_poll ERROR: line %d \n", __LINE__);
 		return 0;
+	}
 	if (q->is_output && !(req_events & (EPOLLOUT | EPOLLWRNORM)))
+	{
+		pr_err("vb2_core_poll ERROR: line %d \n", __LINE__);
 		return 0;
+	}
 
 	/*
 	 * Start file I/O emulator only if streaming API has not been used yet.
@@ -2562,6 +2572,13 @@ __poll_t vb2_core_poll(struct vb2_queue *q, struct file *file,
 				EPOLLOUT | EPOLLWRNORM :
 				EPOLLIN | EPOLLRDNORM;
 	}
+	if (vb)
+		pr_err("vb2_core_poll ERROR: line %d vb %p vb->state %d list_empty(&q->done_list) %d\n",
+			__LINE__, vb, vb->state, list_empty(&q->done_list));
+	else
+		pr_err("vb2_core_poll ERROR: line %d list_empty(&q->done_list) %d\n",
+			__LINE__, list_empty(&q->done_list));
+
 	return 0;
 }
 EXPORT_SYMBOL_GPL(vb2_core_poll);
