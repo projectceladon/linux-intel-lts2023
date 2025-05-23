@@ -40,6 +40,7 @@
 #define VIRTIO_CONSOLE_F_SIZE	0	/* Does host provide console size? */
 #define VIRTIO_CONSOLE_F_MULTIPORT 1	/* Does host provide multiple ports? */
 #define VIRTIO_CONSOLE_F_EMERG_WRITE 2 /* Does host support emergency write? */
+#define VIRTIO_CONSOLE_F_SET_TERMIO 23 /* Does host support set termio ? */
 
 #define VIRTIO_CONSOLE_BAD_ID		(~(__u32)0)
 
@@ -73,6 +74,9 @@ struct virtio_console_control {
 #define VIRTIO_CONSOLE_RESIZE		5
 #define VIRTIO_CONSOLE_PORT_OPEN	6
 #define VIRTIO_CONSOLE_PORT_NAME	7
+#define	VIRTIO_CONSOLE_SET_TERMIO_OBAUD	1000
+#define	VIRTIO_CONSOLE_SET_TERMIO_IBAUD	1001
+#define	VIRTIO_CONSOLE_SET_TERMIO_CRTSCTS	1002
 
 
 #endif /* _UAPI_LINUX_VIRTIO_CONSOLE_H */
