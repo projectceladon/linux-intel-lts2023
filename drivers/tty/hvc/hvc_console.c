@@ -885,6 +885,15 @@ static void hvc_poll_put_char(struct tty_driver *driver, int line, char ch)
 }
 #endif
 
+static void hvc_set_termios(struct tty_struct *tty,
+			     const struct ktermios *old_termios)
+{
+	struct hvc_struct *hp = tty->driver_data;
+
+	if (hp && hp->ops->hvc_set_termios)
+		hp->ops->hvc_set_termios(hp, old_termios);
+}
+
 static const struct tty_operations hvc_ops = {
 	.install = hvc_install,
 	.open = hvc_open,
@@ -895,6 +904,7 @@ static const struct tty_operations hvc_ops = {
 	.unthrottle = hvc_unthrottle,
 	.write_room = hvc_write_room,
 	.chars_in_buffer = hvc_chars_in_buffer,
+	.set_termios = hvc_set_termios,
 	.tiocmget = hvc_tiocmget,
 	.tiocmset = hvc_tiocmset,
 #ifdef CONFIG_CONSOLE_POLL
