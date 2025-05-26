@@ -1192,6 +1192,43 @@ static void notifier_del_vio(struct hvc_struct *hp, int data)
 	hp->irq_requested = 0;
 }
 
+static void virtio_console_set_termios(struct hvc_struct *hp, const struct ktermios *old)
+{
+	struct tty_struct *tty = hp->port.tty;
+	struct port *port;
+	uint16_t value;
+
+	port = find_port_by_vtermno(hp->vtermno);
+	if (!port)
+		return;
+
+	if(!virtio_has_feature(port->portdev->vdev, VIRTIO_CONSOLE_F_SET_TERMIO))
+		return;
+
+	if (tty->termios.c_ospeed != old->c_ospeed) {
+		value = (uint16_t)(tty->termios.c_cflag & CBAUD);
+		printk("baud %x\n", value);
+
+		__send_control_msg(port->portdev, port->id,
+				VIRTIO_CONSOLE_SET_TERMIO_OBAUD, value);
+	}
+
+	if (tty->termios.c_ispeed != old->c_ispeed) {
+		value = (uint16_t)((tty->termios.c_cflag >> IBSHIFT) & CBAUD);
+		printk("ibaud %x\n", value);
+		if (value == B0)
+			value = (uint16_t)(tty->termios.c_cflag & CBAUD);
+		__send_control_msg(port->portdev, port->id,
+				VIRTIO_CONSOLE_SET_TERMIO_IBAUD, value);
+	}
+
+	if ((tty->termios.c_cflag ^ old->c_cflag) & CRTSCTS) {
+		value = (tty->termios.c_cflag & CRTSCTS) ? 1 : 0;
+		__send_control_msg(port->portdev, port->id,
+				VIRTIO_CONSOLE_SET_TERMIO_CRTSCTS, value);
+	}
+}
+
 /* The operations for console ports. */
 static const struct hv_ops hv_ops = {
 	.get_chars = get_chars,
@@ -1199,6 +1236,7 @@ static const struct hv_ops hv_ops = {
 	.notifier_add = notifier_add_vio,
 	.notifier_del = notifier_del_vio,
 	.notifier_hangup = notifier_del_vio,
+	.hvc_set_termios = virtio_console_set_termios,
 };
 
 /*
@@ -2133,6 +2171,7 @@ MODULE_DEVICE_TABLE(virtio, id_table);
 static const unsigned int features[] = {
 	VIRTIO_CONSOLE_F_SIZE,
 	VIRTIO_CONSOLE_F_MULTIPORT,
+	VIRTIO_CONSOLE_F_SET_TERMIO,
 };
 
 static const struct virtio_device_id rproc_serial_id_table[] = {
@@ -2248,6 +2287,7 @@ static int __init virtio_console_init(void)
 {
 	int err;
 
+	printk("virtio_console_init 999999\n");
 	err = class_register(&port_class);
 	if (err)
 		return err;
