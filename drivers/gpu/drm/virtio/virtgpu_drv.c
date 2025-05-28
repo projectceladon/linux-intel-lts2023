@@ -186,23 +186,31 @@ static int virtgpu_freeze(struct virtio_device *vdev)
 	int error;
 	void *buf;
 	int i = 0;
+	printk("virtio gpu freeze start\n");
 
 	error = drm_mode_config_helper_suspend(dev);
 	if (error) {
 		DRM_ERROR("suspend error %d\n", error);
 		return error;
 	}
+	printk("virtio gpu freeze flush obj work\n");
 	vgdev->freeze = 1;
 
 	flush_work(&vgdev->obj_free_work);
+	printk("virtio gpu freeze flush ctrl work\n");
 	flush_work(&vgdev->ctrlq.dequeue_work);
+	printk("virtio gpu freeze flush cursor work\n");
 	flush_work(&vgdev->cursorq.dequeue_work);
+	printk("virtio gpu freeze flush hdcp work\n");
 	if (vgdev->has_hdcp)
 		flush_work(&vgdev->hdcpq.dequeue_work);
+	printk("virtio gpu freeze flush config work\n");
 	flush_work(&vgdev->config_changed_work);
 
+	printk("virtio gpu freeze reset\n");
 	virtio_reset_device(vdev);
 
+	printk("virtio gpu freeze detach unused buffer\n");
 	if(vgdev->has_vblank) {
 		for(i = 0; i < vgdev->num_vblankq; i++) {
 			while ((buf = virtqueue_detach_unused_buf(vgdev->vblank[i].vblank.vq))
@@ -213,6 +221,7 @@ static int virtgpu_freeze(struct virtio_device *vdev)
 
 	vdev->config->del_vqs(vdev);
 
+	printk("virtio gpu freeze finish\n");
 	return 0;
 }
 
@@ -245,12 +254,14 @@ static int virtgpu_restore(struct virtio_device *vdev)
 	if (vgdev->has_hdcp)
 		virtio_gpu_hdcp_notify(vgdev);
 
+	printk("virtio gpu resume drm mode\n");
 	error = drm_mode_config_helper_resume(dev);
 	if (error) {
 		DRM_ERROR("resume error %d\n", error);
 		return error;
 	}
 
+	printk("virtio gpu resume finish\n");
 	return 0;
 }
 #endif
