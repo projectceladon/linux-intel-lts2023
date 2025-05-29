@@ -554,6 +554,7 @@ static bool optee_msg_api_revision_is_compatible(optee_invoke_fn *invoke_fn)
 
 	invoke_fn(OPTEE_SMC_CALLS_REVISION, 0, 0, 0, 0, 0, 0, 0, &res.smccc);
 
+	pr_info("SMC call revision done");
 	if (res.result.major == OPTEE_MSG_REVISION_MAJOR &&
 	    (int)res.result.minor >= OPTEE_MSG_REVISION_MINOR)
 		return true;
@@ -577,8 +578,10 @@ static bool optee_msg_exchange_capabilities(optee_invoke_fn *invoke_fn,
 	if (!IS_ENABLED(CONFIG_SMP) || nr_cpu_ids == 1)
 		a1 |= OPTEE_SMC_NSEC_CAP_UNIPROCESSOR;
 
+	pr_info("SMC exchange capabilities start");
 	invoke_fn(OPTEE_SMC_EXCHANGE_CAPABILITIES, a1, 0, 0, 0, 0, 0, 0,
 		  &res.smccc);
+	pr_info("SMC exchange capabilities done");
 
 	if (res.result.status != OPTEE_SMC_RETURN_OK)
 		return false;
@@ -1090,11 +1093,13 @@ static int optee_probe(struct platform_device *pdev)
 		pr_warn("api revision mismatch\n");
 		return -EINVAL;
 	}
+	pr_info("optee_msg_api_revision_is_compatible OK");
 
 	if (!optee_msg_exchange_capabilities(invoke_fn, &sec_caps)) {
 		pr_warn("capabilities mismatch\n");
 		return -EINVAL;
 	}
+	pr_info("optee_msg_exchange_capabilities OK");
 
 	/*
 	 * Try to use dynamic shared memory if possible
