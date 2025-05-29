@@ -7,6 +7,7 @@
 
 #include <linux/delay.h>
 #include <linux/module.h>
+#include <linux/cdev.h>
 #include <linux/mutex.h>
 #include <linux/pci.h>
 #include <linux/dma-map-ops.h>
@@ -30,6 +31,14 @@
 #define VI_REG_OFFSET(reg)	offsetof(struct virtio_shmem_header, reg)
 #define VI_CFG_REG_OFFSET(reg)  VI_REG_OFFSET(common_config.reg)
 
+#define VIRTIO_SHMEM_BE_STATUS_ACTIVE 	1
+#define VIRTIO_SHMEM_BE_STATUS_INACTIVE	2
+#define VIRTIO_SHMEM_BE_STATUS_RESET	3
+
+#define VIRTIO_SHMEM_HANDSHAKE_MASK	0xa69
+#define VIRTIO_SHMEM_HANDSHAKE_ACK 0x0b69
+#define VIRTIO_SHMEM_SYNC_TIMES 10000
+
 struct virtio_shmem_vq_info {
 	/* the actual virtqueue */
 	struct virtqueue *vq;
@@ -44,6 +53,22 @@ struct virtio_shmem_vq_info {
 	/* the list node for the virtqueues list */
 	struct list_head node;
 };
+#define VIRTIO_SHMEM_NAME	"virtio_shmem"
+#define VIRTIO_SHMEM_MAX_DEVICES		(1U << MINORBITS)
+static DEFINE_IDR(virtio_shmem_idr);
+static DEFINE_MUTEX(minor_lock);
+static int virtio_shmem_major;
+static struct cdev *virtio_shmem_cdev;
+
+static struct attribute *virtio_ivshmem_attrs[] = {
+	NULL,
+};
+ATTRIBUTE_GROUPS(virtio_ivshmem);
+static struct class virtio_ivshmem_class = {
+	.name = "virtio_ivshmem",
+	.dev_groups = virtio_ivshmem_groups,
+};
+
 
 static inline unsigned int get_custom_order(unsigned long size,
 					    unsigned int shift)
@@ -57,17 +82,89 @@ static inline unsigned int get_custom_order(unsigned long size,
 #endif
 }
 
+static int virtio_shmem_reset_virtio_dev(struct virtio_shmem_device *vi_dev);
+static void virtio_shmem_unregister_virtio_dev(struct virtio_shmem_device *vi_dev, int force);
+static int virtio_shmem_register_virtio_dev(struct virtio_shmem_device *vi_dev);
+
+static ssize_t virtio_shmem_remove_virtio(struct device *d,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	struct pci_dev *p = container_of(d, struct pci_dev, dev);
+	struct virtio_shmem_device *vi_dev = pci_get_drvdata(p);
+
+	virtio_shmem_unregister_virtio_dev(vi_dev, 1);
+	return count;
+}
+static DEVICE_ATTR(remove_virtio, 0200, NULL, virtio_shmem_remove_virtio);
+
+static ssize_t virtio_shmem_auto_remove(struct device *d,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	uint32_t auto_register;
+	struct pci_dev *p = container_of(d, struct pci_dev, dev);
+	struct virtio_shmem_device *vi_dev = pci_get_drvdata(p);
+
+	auto_register = simple_strtoul(buf, NULL, 0);
+	vi_dev->auto_unregister = auto_register > 0 ? 1 : 0;
+	return count;
+}
+static DEVICE_ATTR(auto_remove, 0200, NULL, virtio_shmem_auto_remove);
+
 static inline struct virtio_shmem_device *
 to_virtio_shmem_device(struct virtio_device *vdev)
 {
 	return container_of(vdev, struct virtio_shmem_device, vdev);
 }
 
+static int virtio_shmem_be_status(struct virtio_shmem_device *vi_dev)
+{
+	uint32_t mask = READ_ONCE(vi_dev->virtio_header->handshake);
+
+	if ((mask & 0xffff) != VIRTIO_SHMEM_HANDSHAKE_MASK)
+		return VIRTIO_SHMEM_BE_STATUS_INACTIVE;
+	if ((mask & 0xffff0000) >> 16 != vi_dev->backend_rand && vi_dev->virtio_registered == true)
+		return VIRTIO_SHMEM_BE_STATUS_RESET;
+	else
+		return VIRTIO_SHMEM_BE_STATUS_ACTIVE;
+}
+
+static void vi_handshake_work(struct work_struct *work)
+{
+	struct delayed_work *dwork = to_delayed_work(work);
+	struct virtio_shmem_device *vi_dev =
+		container_of(dwork, struct virtio_shmem_device, shmem_handshake_work);
+
+	switch (virtio_shmem_be_status(vi_dev)) {
+		case VIRTIO_SHMEM_BE_STATUS_ACTIVE:
+			if(virtio_shmem_register_virtio_dev(vi_dev))
+				put_device(&vi_dev->vdev.dev);
+			break;
+		case VIRTIO_SHMEM_BE_STATUS_RESET:
+			if(virtio_shmem_reset_virtio_dev(vi_dev))
+				put_device(&vi_dev->vdev.dev);
+			break;
+		default:
+			virtio_shmem_unregister_virtio_dev(vi_dev, 0);
+			break;
+	}
+	WRITE_ONCE(vi_dev->virtio_header->handshake, (vi_dev->peer_id << 16) | VIRTIO_SHMEM_HANDSHAKE_ACK);
+	schedule_delayed_work(&vi_dev->shmem_handshake_work, HZ * 2);
+}
+
 static bool vi_synchronize_reg_write(struct virtio_shmem_device *vi_dev)
 {
-	while (READ_ONCE(vi_dev->virtio_header->write_transaction))
+	int times = 0;
+	while (READ_ONCE(vi_dev->virtio_header->write_transaction)) {
 		cpu_relax();
-
+		if(times++ > VIRTIO_SHMEM_SYNC_TIMES) {
+			if (virtio_shmem_be_status(vi_dev) != VIRTIO_SHMEM_BE_STATUS_ACTIVE)
+				break;
+			else
+				times = 0;
+		}
+	}
 	return true;
 }
 
@@ -327,6 +424,17 @@ static irqreturn_t vi_interrupt(int irq, void *opaque)
 	return ret;
 }
 
+static irqreturn_t vi_event(int irq, void *opaque)
+{
+	struct virtio_shmem_device *vi_dev = opaque;
+
+	if (vi_dev->virtio_removed == false) {
+		kobject_uevent(&vi_dev->dev.kobj, KOBJ_UNBIND);
+		vi_dev->virtio_removed = true;
+	}
+	return IRQ_HANDLED;
+}
+
 static struct virtqueue *vi_setup_vq(struct virtio_device *vdev,
 				     unsigned int index,
 				     void (*callback)(struct virtqueue *vq),
@@ -457,12 +565,15 @@ static void vi_del_vqs(struct virtio_device *vdev)
 	free_irq(pci_irq_vector(vi_dev->pci_dev, 0), vi_dev);
 	if (!vi_dev->per_vq_vector && vi_dev->num_vectors > 1)
 		free_irq(pci_irq_vector(vi_dev->pci_dev, 1), vi_dev);
+	free_irq(pci_irq_vector(vi_dev->pci_dev, READ_ONCE(vi_dev->virtio_header->max_vector) -1), vi_dev);
 	pci_free_irq_vectors(vi_dev->pci_dev);
 
 	kfree(vi_dev->config_irq_name);
 	vi_dev->config_irq_name = NULL;
 	kfree(vi_dev->queues_irq_name);
 	vi_dev->queues_irq_name = NULL;
+	kfree(vi_dev->event_irq_name);
+	vi_dev->event_irq_name = NULL;
 }
 
 static int vi_find_vqs(struct virtio_device *vdev, unsigned int nvqs,
@@ -476,7 +587,7 @@ static int vi_find_vqs(struct virtio_device *vdev, unsigned int nvqs,
 	unsigned int vq_vector, desired_vectors;
 	int err, vectors, i, queue_idx = 0;
 
-	desired_vectors = 1; /* one for config events */
+	desired_vectors = 2; /* one for config events, one for event */
 	for (i = 0; i < nvqs; i++)
 		if (callbacks[i])
 			desired_vectors++;
@@ -548,8 +659,25 @@ static int vi_find_vqs(struct virtio_device *vdev, unsigned int nvqs,
 			vq_vector++;
 	}
 
+	WRITE_ONCE(vi_dev->virtio_header->max_vector, vectors);
+	vi_dev->event_irq_name = kasprintf(GFP_KERNEL, "%s-event",
+						dev_name(&vdev->dev));
+	if (!vi_dev->event_irq_name) {
+		err = -ENOMEM;
+		goto error_event_irq;
+	}
+	err = request_irq(pci_irq_vector(vi_dev->pci_dev, desired_vectors - 1),
+				vi_event, 0,
+				vi_dev->event_irq_name, vi_dev);
+	if (err)
+		goto error_event_irq;
+
 	return 0;
 
+error_event_irq:
+	free_irq(pci_irq_vector(vi_dev->pci_dev, desired_vectors - 1), vi_dev);
+	kfree(vi_dev->event_irq_name);
+	vi_dev->event_irq_name = NULL;
 error_queues_irq:
 	free_irq(pci_irq_vector(vi_dev->pci_dev, 0), vi_dev);
 	kfree(vi_dev->config_irq_name);
@@ -559,6 +687,7 @@ error_common_irq:
 	kfree(vi_dev->queues_irq_name);
 	vi_dev->queues_irq_name = NULL;
 	pci_free_irq_vectors(vi_dev->pci_dev);
+
 	return err;
 }
 
@@ -596,7 +725,7 @@ static struct page *dma_addr_to_page(struct virtio_shmem_device *vi_dev, dma_add
 	unsigned long pfn;
 
 	if (dma_handle >= vi_dev->shmem_sz) {
-		dev_warn(&vi_dev->pci_dev->dev, "DMA handle 0x%llx is out of shared memory region [%p, %p)\n",
+		dev_warn(&vi_dev->pci_dev->dev, "DMA handle 0x%llx is out of shared memory region [0x%p, 0x%p)\n",
 		     dma_handle, vi_dev->shmem, vi_dev->shmem + vi_dev->shmem_sz);
 		return NULL;
 	}
@@ -613,7 +742,7 @@ static dma_addr_t page_to_dma_addr(struct virtio_shmem_device *vi_dev, struct pa
 	pfn = page_to_pfn(page);
 	dma_handle = PFN_PHYS(pfn) - vi_dev->shmem_phys_base;
 	if (dma_handle >= vi_dev->shmem_sz) {
-		dev_warn(&vi_dev->pci_dev->dev, "PFN 0x%lx is out of shared memory region [%p, %p)\n",
+		dev_warn(&vi_dev->pci_dev->dev, "PFN 0x%lx is out of shared memory region [0x%p, 0x%p)\n",
 		     pfn, vi_dev->shmem, vi_dev->shmem + vi_dev->shmem_sz);
 		return 0;
 	}
@@ -654,7 +783,7 @@ static void *vi_dma_alloc(struct device *dev, size_t size,
 		return NULL;
 	}
 
-	*dma_handle = (dma_addr_t)chunk << vi_dev->alloc_shift;
+	*dma_handle = chunk << vi_dev->alloc_shift;
 	addr = vi_dev->shmem + *dma_handle;
 	memset(addr, 0, size);
 
@@ -868,16 +997,193 @@ static const struct dev_pagemap_ops virtio_shmem_region_pgmap_ops = {
 	.page_free		= virtio_shmem_region_page_free,
 };
 
+static void virtio_shmem_device_release(struct device *dev)
+{
+	(void)dev;
+}
+
+static int
+vi_register_virtio_dev(struct virtio_shmem_device *vi_dev)
+{
+	int ret, bitmap_size;
+
+	if (vi_dev->virtio_header->revision < 1 || vi_dev->virtio_header->vendor_id != PCI_VENDOR_ID_REDHAT_QUMRANET) {
+		dev_err(&vi_dev->pci_dev->dev, "virtio-shmem virtio invalid vendor id 0x%x, version %d\n",
+			vi_dev->virtio_header->vendor_id, vi_dev->virtio_header->revision);
+		return -EINVAL;
+	}
+
+	vi_dev->vdev.dev.parent = &vi_dev->pci_dev->dev;
+	vi_dev->vdev.dev.release = virtio_shmem_release_dev;
+	vi_dev->vdev.config = &virtio_shmem_config_ops;
+	vi_dev->vdev.id.device = vi_dev->virtio_header->device_id;
+	vi_dev->vdev.id.vendor = vi_dev->virtio_header->vendor_id;
+	if (vi_dev->virtio_header->backend_flags == 0) {
+		dev_err(&vi_dev->pci_dev->dev, "backend is not present\n");
+		return -EINVAL;
+	}
+	vi_dev->peer_id = vi_dev->virtio_header->backend_id;
+	vi_dev->virtio_header->frontend_status = (vi_dev->this_id << 16) | FRONTEND_FLAG_PRESENT;
+
+	vi_dev->vdev.id.device = vi_dev->virtio_header->device_id;
+	vi_dev->vdev.id.vendor = vi_dev->virtio_header->vendor_id;
+	vi_dev->backend_rand = (vi_dev->virtio_header->handshake & 0xffff0000) >> 16;
+
+
+	/* mark the header chunks used */
+	bitmap_size = BITS_TO_LONGS(vi_dev->shmem_sz >> vi_dev->alloc_shift) * sizeof(long);
+	memset(vi_dev->alloc_bitmap, 1, bitmap_size);
+	bitmap_set(vi_dev->alloc_bitmap, 0,
+		1 << get_custom_order(vi_dev->virtio_header->size,
+				vi_dev->alloc_shift));
+	ret = register_virtio_device(&vi_dev->vdev);
+	if (!ret) {
+		vi_dev->virtio_registered = true;
+	}
+	kobject_uevent(&vi_dev->dev.kobj, KOBJ_BIND);
+	vi_dev->virtio_removed = false;
+	return ret;
+}
+
+static void
+vi_unregister_virtio_dev(struct virtio_shmem_device *vi_dev)
+{
+	unregister_virtio_device(&vi_dev->vdev);
+	memset(&vi_dev->vdev, 0, sizeof(struct virtio_device));
+	vi_dev->virtio_registered = false;
+}
+
+static int virtio_shmem_register_virtio_dev(struct virtio_shmem_device *vi_dev)
+{
+	if (vi_dev->virtio_registered == false) {
+		return vi_register_virtio_dev(vi_dev);
+	}
+	return 0;
+}
+
+static void virtio_shmem_unregister_virtio_dev(struct virtio_shmem_device *vi_dev, int force)
+{
+	if (vi_dev->virtio_registered == true) {
+		if (vi_dev->virtio_removed == false) {
+			kobject_uevent(&vi_dev->dev.kobj, KOBJ_UNBIND);
+			vi_dev->virtio_removed = true;
+		}
+		dev_dbg(&vi_dev->pci_dev->dev, "virtio shmem unregister virtio device\n");
+		if (vi_dev->auto_unregister == true || force == 1)
+			vi_unregister_virtio_dev(vi_dev);
+	}
+}
+
+static int virtio_shmem_reset_virtio_dev(struct virtio_shmem_device *vi_dev)
+{
+	dev_dbg(&vi_dev->pci_dev->dev, "virtio shmem reset virtio device\n");
+	if (vi_dev->virtio_removed == false) {
+		kobject_uevent(&vi_dev->dev.kobj, KOBJ_UNBIND);
+		vi_dev->virtio_removed = true;
+	}
+	if (vi_dev->virtio_registered == false || vi_dev->auto_unregister == true) {
+		return 0;		
+	}
+	virtio_shmem_unregister_virtio_dev(vi_dev, 0);
+	return virtio_shmem_register_virtio_dev(vi_dev);
+}
+
+static long virtio_shmem_ioctl(struct file *filp, unsigned int cmd,
+			   unsigned long arg)
+{
+	int ret = 0;
+	int data;
+	struct virtio_shmem_user *user = filp->private_data;
+	struct virtio_shmem_device *vi_dev = user->vi_dev;
+
+	switch (cmd) {
+		case VIRTIO_SHMEM_IOCTL_AUTO_REMOVE:
+			if (copy_from_user(&data, (void __user *)arg, sizeof(data))) {
+				ret = -EFAULT;
+			} else {
+				vi_dev->auto_unregister = data;
+			}
+			break;
+		
+		case VIRTIO_SHMEM_IOCTL_UNREGISTER:
+			virtio_shmem_unregister_virtio_dev(vi_dev, 1);
+			break;
+
+		default:
+			ret = -ENOTTY;
+			break;
+	}
+	return ret;
+}
+
+static int virtio_ivshmem_open(struct inode *inode, struct file *filep)
+{
+	int err = 0;
+	struct virtio_shmem_device *vi_dev;
+	struct virtio_shmem_user *user;
+
+	mutex_lock(&minor_lock);
+	vi_dev = idr_find(&virtio_shmem_idr, iminor(inode));
+	mutex_unlock(&minor_lock);
+	if (!vi_dev) {
+		err = -ENODEV;
+		goto out;
+	}
+
+	get_device(&vi_dev->dev);
+
+	if (!try_module_get(vi_dev->owner)) {
+		err = -ENODEV;
+		goto out_put_device;
+	}
+
+	user = kmalloc(sizeof(*user), GFP_KERNEL);
+	if (!user) {
+		err = -ENOMEM;
+		goto out_put_module;
+	}
+
+	user->vi_dev = vi_dev;
+	filep->private_data = user;
+
+	return 0;
+
+out_put_module:
+	module_put(vi_dev->owner);
+out_put_device:
+	put_device(&vi_dev->dev);
+out:
+	return err;
+}
+
+static int virtio_ivshmem_release(struct inode *inode, struct file *filep)
+{
+	int err = 0;
+	struct virtio_shmem_user *user = filep->private_data;
+	struct virtio_shmem_device *vi_dev = user->vi_dev;
+
+	kfree(user);
+	module_put(vi_dev->owner);
+	put_device(&vi_dev->dev);
+
+	return err;
+}
+
+static const struct file_operations virtio_ivshmem_fops = {
+	.owner		= THIS_MODULE,
+	.open		= virtio_ivshmem_open,
+	.release	= virtio_ivshmem_release,
+	.unlocked_ioctl = virtio_shmem_ioctl,
+};
+
 int virtio_shmem_probe(struct virtio_shmem_device *vi_dev)
 {
 	unsigned int chunks, chunk_size, bitmap_size;
 	struct pci_dev *pci_dev;
 	struct dev_pagemap *pgmap;
+	int ret = 0;
 
 	pci_dev = vi_dev->pci_dev;
-
-	vi_dev->vdev.dev.release = virtio_shmem_release_dev;
-	vi_dev->vdev.config = &virtio_shmem_config_ops;
 
 	spin_lock_init(&vi_dev->virtqueues_lock);
 	INIT_LIST_HEAD(&vi_dev->virtqueues);
@@ -900,19 +1206,7 @@ int virtio_shmem_probe(struct virtio_shmem_device *vi_dev)
 		return -ENOMEM;
 
 	vi_dev->virtio_header = vi_dev->shmem;
-	if (vi_dev->virtio_header->revision < 1) {
-		dev_err(&pci_dev->dev, "invalid virtio-shmem revision\n");
-		return -EINVAL;
-	}
-	if (vi_dev->virtio_header->backend_flags == 0) {
-		dev_err(&pci_dev->dev, "backend is not present\n");
-		return -EINVAL;
-	}
-	vi_dev->peer_id = vi_dev->virtio_header->backend_id;
-	vi_dev->virtio_header->frontend_status = (vi_dev->this_id << 16) | FRONTEND_FLAG_PRESENT;
-
-	vi_dev->vdev.id.device = vi_dev->virtio_header->device_id;
-	vi_dev->vdev.id.vendor = vi_dev->virtio_header->vendor_id;
+	vi_dev->virtio_header->handshake = (vi_dev->this_id << 16) | VIRTIO_SHMEM_HANDSHAKE_ACK;
 
 	spin_lock_init(&vi_dev->alloc_lock);
 
@@ -931,11 +1225,6 @@ int virtio_shmem_probe(struct virtio_shmem_device *vi_dev)
 	if (!vi_dev->alloc_bitmap)
 		return -ENOMEM;
 
-	/* mark the header chunks used */
-	bitmap_set(vi_dev->alloc_bitmap, 0,
-		   1 << get_custom_order(vi_dev->virtio_header->size,
-					 vi_dev->alloc_shift));
-
 	vi_dev->map_src_addr = devm_kzalloc(&pci_dev->dev,
 					    chunks * sizeof(void *),
 					    GFP_KERNEL);
@@ -944,9 +1233,129 @@ int virtio_shmem_probe(struct virtio_shmem_device *vi_dev)
 
 	set_dma_ops(&pci_dev->dev, &virtio_shmem_dma_ops);
 
+	vi_dev->auto_unregister = 1;
+
+	// /dev/virtio_shmemX
+	vi_dev->owner = THIS_MODULE;
+	mutex_lock(&minor_lock);
+	vi_dev->minor = idr_alloc(&virtio_shmem_idr, vi_dev, 0, VIRTIO_SHMEM_MAX_DEVICES, GFP_KERNEL);
+	mutex_unlock(&minor_lock);
+	device_initialize(&vi_dev->dev);
+	vi_dev->dev.devt = MKDEV(virtio_shmem_major, vi_dev->minor);
+	vi_dev->dev.parent = &vi_dev->pci_dev->dev;
+	vi_dev->dev.class = &virtio_ivshmem_class;
+	vi_dev->dev.release = virtio_shmem_device_release;
+	dev_set_drvdata(&vi_dev->dev, vi_dev);
+	
+	ret = dev_set_name(&vi_dev->dev, "virtio_shmem%d", vi_dev->minor);
+	if (ret)
+		goto err_device_create;
+
+	ret = device_add(&vi_dev->dev);
+	if (ret)
+		goto err_device_create;
+
+	ret = device_create_file(&pci_dev->dev, &dev_attr_auto_remove);
+	ret |= device_create_file(&pci_dev->dev, &dev_attr_remove_virtio);
+	if (unlikely(ret)) {
+		dev_err(&vi_dev->dev, "Failed creating attrs\n");
+		goto err_device_create;
+	}
+
+	INIT_DELAYED_WORK(&vi_dev->shmem_handshake_work, vi_handshake_work);
+	schedule_delayed_work(&vi_dev->shmem_handshake_work, 2 * HZ);
+	if (virtio_shmem_be_status(vi_dev) == VIRTIO_SHMEM_BE_STATUS_ACTIVE) {
+		 if(virtio_shmem_register_virtio_dev(vi_dev)) {
+			put_device(&vi_dev->vdev.dev);
+			ret = -EINVAL;
+			goto err_register;
+		 }
+	}
+
 	return 0;
+err_register:
+	device_remove_file(&pci_dev->dev, &dev_attr_auto_remove);
+	device_remove_file(&pci_dev->dev, &dev_attr_remove_virtio);
+
+err_device_create:
+	unregister_virtio_device(&vi_dev->vdev);
+	vi_dev->virtio_registered = false;
+	vi_dev->backend_rand = 0;
+
+	mutex_lock(&minor_lock);
+	idr_remove(&virtio_shmem_idr, vi_dev->minor);
+	mutex_unlock(&minor_lock);
+
+	put_device(&vi_dev->dev);
+	return ret;
 }
 
+void virtio_shmem_remove(struct virtio_shmem_device *vi_dev)
+{
+	device_remove_file(&vi_dev->pci_dev->dev, &dev_attr_auto_remove);
+	device_remove_file(&vi_dev->pci_dev->dev, &dev_attr_remove_virtio);
+
+	mutex_lock(&minor_lock);
+	idr_remove(&virtio_shmem_idr, vi_dev->minor);
+	mutex_unlock(&minor_lock);
+	device_del(&vi_dev->dev);
+
+	virtio_shmem_unregister_virtio_dev(vi_dev, 1);
+}
+
+static int __init virito_shmem_init(void)
+{
+	struct cdev *cdev = NULL;
+	dev_t virtio_shmem_dev = 0;
+	int result;
+
+	result = alloc_chrdev_region(&virtio_shmem_dev, 0, VIRTIO_SHMEM_MAX_DEVICES, VIRTIO_SHMEM_NAME);
+	if (result)
+		return result;
+
+	result = -ENOMEM;
+	cdev = cdev_alloc();
+	if (!cdev)
+		goto err_cdev_alloc;
+
+	cdev->owner = THIS_MODULE;
+	cdev->ops = &virtio_ivshmem_fops;
+	kobject_set_name(&cdev->kobj, "%s", VIRTIO_SHMEM_NAME);
+
+	result = cdev_add(cdev, virtio_shmem_dev, VIRTIO_SHMEM_MAX_DEVICES);
+	if (result)
+		goto err_cdev_add;
+
+	virtio_shmem_major = MAJOR(virtio_shmem_dev);
+	virtio_shmem_cdev = cdev;
+
+	result = class_register(&virtio_ivshmem_class);
+	if (result) {
+		goto err_class_register;
+	}
+
+	return 0;
+err_class_register:
+	class_unregister(&virtio_ivshmem_class);
+err_cdev_add:
+	kobject_put(&cdev->kobj);
+	cdev_del(cdev);
+err_cdev_alloc:
+	unregister_chrdev_region(virtio_shmem_dev, VIRTIO_SHMEM_MAX_DEVICES);
+	return result;
+
+}
+
+static void __exit virtio_ivshmem_exit(void)
+{
+	class_unregister(&virtio_ivshmem_class);
+	unregister_chrdev_region(MKDEV(virtio_shmem_major, 0), VIRTIO_SHMEM_MAX_DEVICES);
+	cdev_del(virtio_shmem_cdev);
+	idr_destroy(&virtio_shmem_idr);
+}
+
+module_init(virito_shmem_init)
+module_exit(virtio_ivshmem_exit)
 MODULE_AUTHOR("Jan Kiszka <jan.kiszka@siemens.com>");
 MODULE_DESCRIPTION("Driver for shared memory based virtio front-end devices");
 MODULE_LICENSE("GPL v2");
