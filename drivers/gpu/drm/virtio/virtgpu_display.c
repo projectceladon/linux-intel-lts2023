@@ -543,10 +543,20 @@ virtio_gpu_wait_for_vblanks(struct drm_device *dev,
 						drm_crtc_vblank_count(crtc)),
 				msecs_to_jiffies(100));
 
-		if (!ret)
+		if (!ret) {
+			struct drm_pending_vblank_event *e;
+			int irqflags;
+
 			drm_err(dev, "[CRTC:%d:%s] vblank wait timed out\n",
 				crtc->base.id, crtc->name);
-
+			e = xchg(&vgdev->cache_event[i], NULL);
+			if (e) {
+				spin_lock_irqsave(&dev->event_lock, irqflags);
+				drm_crtc_send_vblank_event(&vgdev->outputs[i].crtc, e);
+				spin_unlock_irqrestore(&dev->event_lock, irqflags);
+				drm_crtc_vblank_put(&vgdev->outputs[i].crtc);
+			}
+		}
 		drm_crtc_vblank_put(crtc);
 	}
 }
