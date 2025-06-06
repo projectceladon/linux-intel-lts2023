@@ -61,6 +61,8 @@ struct hv_ops {
 	void (*notifier_del)(struct hvc_struct *hp, int irq);
 	void (*notifier_hangup)(struct hvc_struct *hp, int irq);
 
+	/* Handler for tty set_termios implementation */
+	void (*hvc_set_termios)(struct hvc_struct *hp, const struct ktermios *old);
 	/* tiocmget/set implementation */
 	int (*tiocmget)(struct hvc_struct *hp);
 	int (*tiocmset)(struct hvc_struct *hp, unsigned int set, unsigned int clear);
