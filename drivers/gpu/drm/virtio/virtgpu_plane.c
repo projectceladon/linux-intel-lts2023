@@ -621,6 +621,7 @@ static void virtio_gpu_primary_plane_update(struct drm_plane *plane,
 				  rect.y1,
 				  rect.x2 - rect.x1,
 				  rect.y2 - rect.y1);
+	output->primary_update = true;
 }
 
 static void virtio_gpu_cursor_plane_update(struct drm_plane *plane,
