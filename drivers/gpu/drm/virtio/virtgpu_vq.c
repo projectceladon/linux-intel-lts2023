@@ -93,6 +93,7 @@ void virtio_gpu_vblank_poll_arm(struct virtqueue *vq)
 	spin_unlock_irqrestore(&vgdev->vblank[target].vblank.qlock, irqflags);
 }
 
+#define PAGEFLIP_RESET 10
 void virtio_gpu_vblank_ack(struct virtqueue *vq)
 {
 	struct drm_device *dev = vq->vdev->priv;
@@ -101,6 +102,7 @@ void virtio_gpu_vblank_ack(struct virtqueue *vq)
 	unsigned int len;
 	unsigned int *ret_value;
 	unsigned target = 0;
+	bool timeout = false;
 
 	while((target < vgdev->num_vblankq) && (vgdev->vblank[target].vblank.vq != vq)) {
 		target++;
@@ -114,6 +116,10 @@ void virtio_gpu_vblank_ack(struct virtqueue *vq)
 		drm_handle_vblank(dev, target);
 
 		if (*ret_value != 0) {
+			if (atomic64_read(&vgdev->flip_sequence[target]) == *ret_value)
+				vgdev->vblank[target].idle_vblank_count++;
+			else
+				vgdev->vblank[target].idle_vblank_count = 0;
 			atomic64_set(&vgdev->flip_sequence[target], *ret_value);
 		}
 
@@ -125,8 +131,11 @@ void virtio_gpu_vblank_ack(struct virtqueue *vq)
 	struct drm_pending_vblank_event *e = xchg(&vgdev->cache_event[target], NULL);
 	if (!e)
 		return;
-
-	if (drm_vblank_passed(atomic64_read(&vgdev->flip_sequence[target]),
+	if (vgdev->vblank[target].idle_vblank_count >= PAGEFLIP_RESET) {
+		vgdev->vblank[target].idle_vblank_count = 0;
+		timeout = true;
+	}
+	if (timeout || drm_vblank_passed(atomic64_read(&vgdev->flip_sequence[target]),
 			      e->sequence)) {
 		spin_lock_irqsave(&dev->event_lock, irqflags);
 		drm_crtc_send_vblank_event(&vgdev->outputs[target].crtc, e);
@@ -559,7 +568,7 @@ void virtio_gpu_vblankq_notify(struct virtio_gpu_device *vgdev)
 
 	for(i=0; i < vgdev->num_vblankq; i++) {
 		spin_lock_irqsave(&vgdev->vblank[i].vblank.qlock, irqflags);
-
+		vgdev->vblank[i].idle_vblank_count = 0;
 		size = virtqueue_get_vring_size(vgdev->vblank[i].vblank.vq);
 		if (size > ARRAY_SIZE(vgdev->vblank[i].buf))
 			size = ARRAY_SIZE(vgdev->vblank[i].buf);
