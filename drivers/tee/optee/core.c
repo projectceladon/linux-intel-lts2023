@@ -144,10 +144,10 @@ typedef enum {
    EVENT_ROLLBACK,
 } event_src;
 
-static struct optee_smc_args *g_smc_args = NULL;
-static struct optee_smc_ring *g_smc_avail_ring = NULL;
-static struct optee_smc_ring *g_smc_used_ring = NULL;
-static struct optee_vm_ids *g_smc_vm_ids = NULL;
+static volatile struct optee_smc_args *g_smc_args = NULL;
+static volatile struct optee_smc_ring *g_smc_avail_ring = NULL;
+static volatile struct optee_smc_ring *g_smc_used_ring = NULL;
+static volatile struct optee_vm_ids *g_smc_vm_ids = NULL;
 static uint32_t *g_smc_evt_src = NULL;
 
 unsigned long optee_shm_offset = 0;
@@ -877,6 +877,7 @@ static void optee_smccc_smc(unsigned long a0, unsigned long a1,
 			    struct arm_smccc_res *res)
 {
 	u16 index = 0;
+	u32 count = 0;
 
 	spin_lock(&smc_ring_lock);
 
@@ -909,13 +910,19 @@ static void optee_smccc_smc(unsigned long a0, unsigned long a1,
 	g_smc_used_ring->tail = (g_smc_used_ring->tail + 1) % OPTEE_SHM_QUEUE_SIZE;
 	spin_unlock(&smc_ring_lock);
 
-	if (hypervisor_is_type(X86_HYPER_QNX)) {
-		*g_smc_evt_src = EVENT_KERNEL;
-		g_ivshmem_dev.ctrl->notify = 1 << g_smc_vm_ids->tee_id;
-	} else
-		writel(g_smc_vm_ids->tee_id << 16, g_ivshmem_dev.regs_addr + DOORBELL_OFF);
+	while (g_smc_args[index].a8 != OPTEE_HANDLE_DONE) {
+		if (++count == 15)
+			pr_warn("One SMC has sent interrupts 15 times");
 
-	wait_event_interruptible(optee_smc_queue, (g_smc_args[index].a8 == OPTEE_HANDLE_DONE));
+		if (hypervisor_is_type(X86_HYPER_QNX)) {
+			*g_smc_evt_src = EVENT_KERNEL;
+			g_ivshmem_dev.ctrl->notify = 1 << g_smc_vm_ids->tee_id;
+		} else
+			writel(g_smc_vm_ids->tee_id << 16, g_ivshmem_dev.regs_addr + DOORBELL_OFF);
+
+		wait_event_interruptible_timeout(optee_smc_queue,
+				(g_smc_args[index].a8 == OPTEE_HANDLE_DONE), HZ*2);
+	}
 
 	g_smc_args[index].a8 = 0x0;
 	res->a0 = g_smc_args[index].a0;
@@ -1413,7 +1420,7 @@ static int ivshmem_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	for (i = 0; i < OPTEE_SHM_QUEUE_SIZE; i++) {
 		g_smc_used_ring->ring[i] = OPTEE_SHM_QUEUE_SIZE;
 	}
-	memset(g_smc_args, 0, sizeof(struct optee_smc_args) * OPTEE_SHM_QUEUE_SIZE);
+	memset((void *)g_smc_args, 0, sizeof(struct optee_smc_args) * OPTEE_SHM_QUEUE_SIZE);
 
 	g_ivshmem_dev.dev = pdev;
 
@@ -1566,7 +1573,7 @@ static int qnx_ivshmem_probe(struct pci_dev *pdev, const struct pci_device_id *i
 	for (i = 0; i < OPTEE_SHM_QUEUE_SIZE; i++) {
 		g_smc_used_ring->ring[i] = OPTEE_SHM_QUEUE_SIZE;
 	}
-	memset(g_smc_args, 0, sizeof(struct optee_smc_args) * OPTEE_SHM_QUEUE_SIZE);
+	memset((void *)g_smc_args, 0, sizeof(struct optee_smc_args) * OPTEE_SHM_QUEUE_SIZE);
 
 	g_ivshmem_dev.dev = pdev;
 
