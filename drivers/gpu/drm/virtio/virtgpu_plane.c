@@ -357,6 +357,11 @@ static void virtio_gpu_resource_flush(struct drm_plane *plane,
 
 	vgfb = to_virtio_gpu_framebuffer(plane->state->fb);
 	bo = gem_to_virtio_gpu_obj(vgfb->base.obj[0]);
+	if (vgdev->has_multi_plane) {
+		virtio_gpu_cmd_resource_flush(vgdev, bo->hw_res_handle, x, y,
+				      width, height, NULL, NULL);
+		return;
+	}
 	fence = virtio_gpu_fence_alloc(vgdev, vgdev->fence_drv.context, 0);
 
 	if (fence) {
@@ -394,9 +399,14 @@ static void virtio_gpu_resource_flush_sprite(struct drm_plane *plane, int indx,
 	int i, cnt=0;
 	int plane_index = 0;
 
+	if (vgdev->has_multi_plane) {
+		plane_index = plane->index - vgdev->outputs[indx].plane_idx_offset;
+		virtio_gpu_cmd_resource_flush_sprite(vgdev, indx, plane_index, fb,
+			resource_id, cnt, x, y, width, height, NULL, NULL);
+		return;
+	}
 	vgfb = to_virtio_gpu_framebuffer(plane->state->fb);
 	fence = virtio_gpu_fence_alloc(vgdev, vgdev->fence_drv.context, 0);
-
 	if (fence) {
 		objs = virtio_gpu_array_alloc(1);
 		if (!objs) {
