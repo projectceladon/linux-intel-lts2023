@@ -239,6 +239,50 @@ static int virtio_gpu_check_plane_scaling(struct drm_plane_state *state,
 	return 0;
 }
 
+static unsigned int adjusted_rate(const struct drm_rect *src,
+				 const struct drm_rect *dst,
+				 unsigned int rate)
+{
+	unsigned int src_w, src_h, dst_w, dst_h;
+
+	src_w = drm_rect_width(src) >> 16;
+	src_h = drm_rect_height(src) >> 16;
+	dst_w = drm_rect_width(dst);
+	dst_h = drm_rect_height(dst);
+
+	/* Downscaling limits the maximum pixel rate */
+	dst_w = min(src_w, dst_w);
+	dst_h = min(src_h, dst_h);
+
+	return DIV_ROUND_UP_ULL(mul_u32_u32(rate, src_w * src_h),
+				dst_w * dst_h);
+}
+
+static int virtio_gpu_plane_cdclk_check(struct drm_plane_state *plane_state,
+		                         struct drm_crtc_state *crtc_state)
+{
+	unsigned int plane_cdclk;
+	unsigned int pixel_rate;
+	struct drm_rect src, dst;
+
+	drm_rect_init(&src, plane_state->src_x, plane_state->src_y,
+		      plane_state->src_w, plane_state->src_h);
+
+	drm_rect_init(&dst, plane_state->crtc_x, plane_state->crtc_y,
+		      plane_state->crtc_w, plane_state->crtc_h);
+
+	pixel_rate = adjusted_rate(&src,
+			&dst, crtc_state->mode.crtc_clock);
+
+	plane_cdclk = DIV_ROUND_UP(pixel_rate, 2);
+
+	DRM_DEBUG("pixelrate:%lu plane cdclk:%lu \n", pixel_rate, plane_cdclk);
+
+	if(plane_cdclk >= 652800) /* igpu max cdclk */
+		return -EINVAL;
+	return 0;
+}
+
 static int virtio_gpu_plane_atomic_check(struct drm_plane *plane,
 					 struct drm_atomic_state *state)
 {
@@ -275,6 +319,12 @@ static int virtio_gpu_plane_atomic_check(struct drm_plane *plane,
 					       new_plane_state->crtc);
 	if (IS_ERR(crtc_state))
                 return PTR_ERR(crtc_state);
+
+	ret = virtio_gpu_plane_cdclk_check(new_plane_state, crtc_state);
+	if(ret) {
+		DRM_DEBUG("required cdclk more than max cdclk \n");
+		return -EINVAL;
+	}
 
 	/* Ensure lmem objects from i915_ag are attached to dGPU backing CRTC */
 	if (vgdev->output_cap_mask & (1lu << drm_crtc_index(new_plane_state->crtc))) {
