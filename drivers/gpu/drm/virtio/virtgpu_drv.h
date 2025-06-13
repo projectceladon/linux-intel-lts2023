@@ -219,6 +219,7 @@ struct virtio_gpu_output {
 	uint64_t rotation[VIRTIO_GPU_MAX_PLANES];
 	unsigned scaler_users;
 	struct virtio_gpu_hdcp hdcp;
+	bool primary_update;
 };
 #define drm_crtc_to_virtio_gpu_output(x) \
 	container_of(x, struct virtio_gpu_output, crtc)
