@@ -67,7 +67,52 @@ extern unsigned long __drm_debug;
  *     }
  */
 
-/**
+enum drm_debug_category {
+	/* These names must match those in DYNAMIC_DEBUG_CLASSBITS */
+	/**
+	 * @DRM_UT_CORE: Used in the generic drm code: drm_ioctl.c, drm_mm.c,
+	 * drm_memory.c, ...
+	 */
+	DRM_UT_CORE,
+	/**
+	 * @DRM_UT_DRIVER: Used in the vendor specific part of the driver: i915,
+	 * radeon, ... macro.
+	 */
+	DRM_UT_DRIVER,
+	/**
+	 * @DRM_UT_KMS: Used in the modesetting code.
+	 */
+	DRM_UT_KMS,
+	/**
+	 * @DRM_UT_PRIME: Used in the prime code.
+	 */
+	DRM_UT_PRIME,
+	/**
+	 * @DRM_UT_ATOMIC: Used in the atomic code.
+	 */
+	DRM_UT_ATOMIC,
+	/**
+	 * @DRM_UT_VBL: Used for verbose debug message in the vblank code.
+	 */
+	DRM_UT_VBL,
+	/**
+	 * @DRM_UT_STATE: Used for verbose atomic state debugging.
+	 */
+	DRM_UT_STATE,
+	/**
+	 * @DRM_UT_LEASE: Used in the lease code.
+	 */
+	DRM_UT_LEASE,
+	/**
+	 * @DRM_UT_DP: Used in the DP code.
+	 */
+	DRM_UT_DP,
+	/**
+	 * @DRM_UT_DRMRES: Used in the drm managed resources code.
+	 */
+	DRM_UT_DRMRES
+};
+/*
  * struct drm_printer - drm output "stream"
  *
  * Do not use struct members directly.  Use drm_printer_seq_file(),
@@ -78,7 +123,13 @@ struct drm_printer {
 	void (*printfn)(struct drm_printer *p, struct va_format *vaf);
 	void (*puts)(struct drm_printer *p, const char *str);
 	void *arg;
+	const void *origin;
 	const char *prefix;
+	struct {
+		unsigned int series;
+		unsigned int counter;
+	} line;
+	enum drm_debug_category category;
 };
 
 void __drm_printfn_coredump(struct drm_printer *p, struct va_format *vaf);
@@ -88,6 +139,8 @@ void __drm_puts_seq_file(struct drm_printer *p, const char *str);
 void __drm_printfn_info(struct drm_printer *p, struct va_format *vaf);
 void __drm_printfn_debug(struct drm_printer *p, struct va_format *vaf);
 void __drm_printfn_err(struct drm_printer *p, struct va_format *vaf);
+void __drm_printfn_line(struct drm_printer *p, struct va_format *vaf);
+
 
 __printf(2, 3)
 void drm_printf(struct drm_printer *p, const char *f, ...);
@@ -327,51 +380,18 @@ static inline struct drm_printer drm_err_printer(const char *prefix)
  *   # echo 0xf > /sys/module/drm/parameters/debug
  *
  */
-enum drm_debug_category {
-	/* These names must match those in DYNAMIC_DEBUG_CLASSBITS */
-	/**
-	 * @DRM_UT_CORE: Used in the generic drm code: drm_ioctl.c, drm_mm.c,
-	 * drm_memory.c, ...
-	 */
-	DRM_UT_CORE,
-	/**
-	 * @DRM_UT_DRIVER: Used in the vendor specific part of the driver: i915,
-	 * radeon, ... macro.
-	 */
-	DRM_UT_DRIVER,
-	/**
-	 * @DRM_UT_KMS: Used in the modesetting code.
-	 */
-	DRM_UT_KMS,
-	/**
-	 * @DRM_UT_PRIME: Used in the prime code.
-	 */
-	DRM_UT_PRIME,
-	/**
-	 * @DRM_UT_ATOMIC: Used in the atomic code.
-	 */
-	DRM_UT_ATOMIC,
-	/**
-	 * @DRM_UT_VBL: Used for verbose debug message in the vblank code.
-	 */
-	DRM_UT_VBL,
-	/**
-	 * @DRM_UT_STATE: Used for verbose atomic state debugging.
-	 */
-	DRM_UT_STATE,
-	/**
-	 * @DRM_UT_LEASE: Used in the lease code.
-	 */
-	DRM_UT_LEASE,
-	/**
-	 * @DRM_UT_DP: Used in the DP code.
-	 */
-	DRM_UT_DP,
-	/**
-	 * @DRM_UT_DRMRES: Used in the drm managed resources code.
-	 */
-	DRM_UT_DRMRES
-};
+static inline struct drm_printer drm_line_printer(struct drm_printer *p,
+						  const char *prefix,
+						  unsigned int series)
+{
+	struct drm_printer lp = {
+		.printfn = __drm_printfn_line,
+		.arg = p,
+		.prefix = prefix,
+		.line = { .series = series, },
+	};
+	return lp;
+}
 
 static inline bool drm_debug_enabled_raw(enum drm_debug_category category)
 {
