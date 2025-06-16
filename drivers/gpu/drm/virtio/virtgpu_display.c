@@ -142,11 +142,14 @@ static void virtio_gpu_crtc_atomic_disable(struct drm_crtc *crtc,
 static void virtio_gpu_crtc_atomic_begin(struct drm_crtc *crtc,
 					 struct drm_atomic_state *state)
 {
+	struct virtio_gpu_output *output = NULL;
 	struct virtio_gpu_device *vgdev = crtc->dev->dev_private;
 	struct drm_device *drm = crtc->dev;
 	const unsigned pipe = drm_crtc_index(crtc);
 	struct drm_pending_vblank_event *old_e, *e = crtc->state->event;
 
+	output = drm_crtc_to_virtio_gpu_output(crtc);
+	output->primary_update = false;
 	if (!vgdev->has_vblank || !crtc->state->event)
 		return;
 
@@ -217,9 +220,24 @@ static void virtio_gpu_crtc_atomic_flush(struct drm_crtc *crtc,
 	struct drm_device *drm = crtc->dev;
 	struct virtio_gpu_device *vgdev = drm->dev_private;
 	const unsigned pipe = drm_crtc_index(crtc);
+	unsigned long irqflags;
+	struct drm_pending_vblank_event *e;
 
-	if(vgdev->has_multi_plane)
+	if(vgdev->has_multi_plane) {
 		virtio_gpu_resource_flush_sync(crtc);
+	} else {
+		if (!output->primary_update) {
+			DRM_INFO("no primary update\n");
+			e = xchg(&vgdev->cache_event[pipe], NULL);
+			if (e) {
+				spin_lock_irqsave(&drm->event_lock, irqflags);
+				drm_crtc_send_vblank_event(&vgdev->outputs[pipe].crtc, e);
+				spin_unlock_irqrestore(&drm->event_lock, irqflags);
+				drm_crtc_vblank_put(&vgdev->outputs[pipe].crtc);
+			}
+		}
+	}
+	output->primary_update = false;
 
 	if(vgdev->has_scaling)
 		output->scaler_users = 0;
