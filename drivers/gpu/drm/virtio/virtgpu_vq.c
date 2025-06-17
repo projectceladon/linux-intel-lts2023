@@ -129,8 +129,15 @@ void virtio_gpu_vblank_ack(struct virtqueue *vq)
 		return;
 
 	struct drm_pending_vblank_event *e = xchg(&vgdev->cache_event[target], NULL);
-	if (!e)
+	if (!e) {
+		spin_lock_irqsave(&dev->vblank_time_lock, irqflags);
+		if (!dev->vblank[target].enabled && vgdev->vblank[target].enabled) {
+			virtqueue_disable_cb(vgdev->vblank[target].vblank.vq);
+			vgdev->vblank[target].enabled = false;
+		}
+		spin_unlock_irqrestore(&dev->vblank_time_lock, irqflags);
 		return;
+	}
 	if (vgdev->vblank[target].idle_vblank_count >= PAGEFLIP_RESET) {
 		vgdev->vblank[target].idle_vblank_count = 0;
 		timeout = true;
