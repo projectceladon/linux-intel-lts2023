@@ -1601,6 +1601,8 @@ int intel_engines_init(struct intel_gt *gt)
 			return err;
 
 		intel_engine_add_user(engine);
+
+		i915_gpu_work_stats_init(engine);
 	}
 
 	return 0;

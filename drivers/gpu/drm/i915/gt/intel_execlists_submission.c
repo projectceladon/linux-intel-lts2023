@@ -1252,6 +1252,11 @@ static unsigned long active_preempt_timeout(struct intel_engine_cs *engine,
 	return READ_ONCE(engine->props.preempt_timeout_ms);
 }
 
+static unsigned long work_period_timeslice(struct intel_engine_cs *engine)
+{
+	return GPU_WORK_PERIOD_EVENT_TIMEOUT;
+}
+
 static void set_preempt_timeout(struct intel_engine_cs *engine,
 				const struct i915_request *rq)
 {
@@ -2040,6 +2045,8 @@ process_csb(struct intel_engine_cs *engine, struct i915_request **inactive)
 			if (active_ce)
 				lrc_runtime_start(active_ce);
 		}
+		if (active_ce)
+			active_ce->start_time_ns = ktime_get_raw_ns();
 		new_timeslice(execlists);
 	}
 
@@ -2423,6 +2430,13 @@ static bool preempt_timeout(const struct intel_engine_cs *const engine)
 	return engine->execlists.pending[0];
 }
 
+static bool work_period_expired(const struct intel_engine_cs *const engine)
+{
+	const struct timer_list *t = &engine->execlists.work_period_timer;
+
+	return timer_expired(t);
+}
+
 /*
  * Check the unread Context Status Buffers and manage the submission of new
  * contexts to the ELSP accordingly.
@@ -2438,6 +2452,17 @@ static void execlists_submission_tasklet(struct tasklet_struct *t)
 	rcu_read_lock();
 	inactive = process_csb(engine, post);
 	GEM_BUG_ON(inactive - post > ARRAY_SIZE(post));
+
+	struct intel_context *ce = (*inactive)->context;
+	struct i915_engine_work *ew = &engine->gpu_work;
+	i915_gpu_work_process_ctx(ce, ew);
+
+	if (unlikely(work_period_expired(engine))) {
+		cancel_timer(&engine->execlists.work_period_timer);
+		schedule_work(&ew->event_work);
+		set_timer_ms(&engine->execlists.work_period_timer,
+				 work_period_timeslice(engine));
+	}
 
 	if (unlikely(preempt_timeout(engine))) {
 		const struct i915_request *rq = *engine->execlists.active;
@@ -2545,6 +2570,11 @@ static void execlists_timeslice(struct timer_list *timer)
 static void execlists_preempt(struct timer_list *timer)
 {
 	execlists_kick(timer, preempt);
+}
+
+static void execlists_work_period(struct timer_list *timer)
+{
+	execlists_kick(timer, work_period_timer);
 }
 
 static void queue_request(struct intel_engine_cs *engine,
@@ -3543,6 +3573,8 @@ int intel_execlists_submission_setup(struct intel_engine_cs *engine)
 	tasklet_setup(&engine->sched_engine->tasklet, execlists_submission_tasklet);
 	timer_setup(&engine->execlists.timer, execlists_timeslice, 0);
 	timer_setup(&engine->execlists.preempt, execlists_preempt, 0);
+	timer_setup(&engine->execlists.work_period_timer, execlists_work_period, 0);
+
 
 	logical_ring_default_vfuncs(engine);
 	logical_ring_default_irqs(engine);
