@@ -131,6 +131,14 @@ static void virtio_gpu_crtc_atomic_disable(struct drm_crtc *crtc,
 		drm_crtc_vblank_put(crtc);
 	}
 
+	if (crtc->state->event) {
+		DRM_INFO("event clean in atomic disable\n");
+		spin_lock_irq(&dev->event_lock);
+		drm_crtc_send_vblank_event(crtc, crtc->state->event);
+		crtc->state->event = NULL;
+		spin_unlock_irq(&dev->event_lock);
+	}
+
 	if (vgdev->has_vblank) {
 		drm_crtc_vblank_off(crtc);
 	}
@@ -518,8 +526,10 @@ virtio_gpu_wait_for_vblanks(struct drm_device *dev,
 		return;
 
 	for_each_oldnew_crtc_in_state(old_state, crtc, old_crtc_state, new_crtc_state, i) {
-		if (!new_crtc_state->active)
+		if (!new_crtc_state->active) {
+			DRM_ERROR("crtc is not active in wait for vblank\n");
 			continue;
+		}
 
 		ret = drm_crtc_vblank_get(crtc);
 		if (ret != 0)
@@ -605,6 +615,10 @@ static void virtio_gpu_commit_tail(struct drm_atomic_state *old_state)
 
 	virtio_gpu_wait_for_vblanks(dev, old_state);
 
+	if (old_state->fake_commit){
+		DRM_ERROR("signal fake commit flip done\n");
+		complete_all(&old_state->fake_commit->flip_done);
+	}
 	drm_atomic_helper_cleanup_planes(dev, old_state);
 }
 
