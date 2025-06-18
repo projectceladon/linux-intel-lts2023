@@ -34,30 +34,6 @@ static void virtio_ivshmem_notify_peer(struct virtio_shmem_device *vi_dev, unsig
 	writel((vi_dev->peer_id << 16), &vi_data->ivshm_regs->doorbell);
 }
 
-static int virito_ivshmem_check_virtio_supports(struct pci_dev *pdev)
-{
-	unsigned long bar_start, bar_len;
-	void __iomem *bar_addr;
-	int vendor, err = -1;
-
-	bar_start = pci_resource_start(pdev, 2);
-	bar_len = pci_resource_len(pdev, 2);
-	if (bar_start && bar_len) {
-		if (pci_resource_flags(pdev, 2) & IORESOURCE_MEM) {
-			bar_addr = pci_iomap(pdev, 2, bar_len);
-			if (!bar_addr) {
-				dev_err(&pdev->dev, "Could not map memory BAR #%d\n", 2);
-				return -1;
-			}
-			vendor = readw(bar_addr + IVSHMEM_VENDOR_OFFSET);
-			if (vendor == PCI_VENDOR_ID_REDHAT_QUMRANET)
-				err = 0;
-			pci_iounmap(pdev, bar_addr);
-		}
-	}
-	return err;
-}
-
 static int virtio_ivshmem_probe(struct pci_dev *pci_dev,
 				const struct pci_device_id *pci_id)
 {
@@ -95,12 +71,6 @@ static int virtio_ivshmem_probe(struct pci_dev *pci_dev,
 
 	vi_dev->this_id = readl(&vi_data->ivshm_regs->ivpos);
 
-	ret = virito_ivshmem_check_virtio_supports(pci_dev);
-	if (ret != 0) {
-		dev_err(&pci_dev->dev, "not a virtio device\n");
-		goto err_enable;
-	}
-
 	section_sz = pci_resource_len(pci_dev, 2);
 	if (section_sz == 0) {
 		dev_err(&pci_dev->dev, "missing shared memory\n");
@@ -118,17 +88,11 @@ static int virtio_ivshmem_probe(struct pci_dev *pci_dev,
 	vi_dev->shmem_sz = section_sz;
 	vi_dev->notify_peer = virtio_ivshmem_notify_peer;
 	vi_dev->priv = vi_data;
+	vi_dev->virtio_registered = false;
 
 	ret = virtio_shmem_probe(vi_dev);
 	if (ret)
 		goto err_enable;
-
-	ret = register_virtio_device(&vi_dev->vdev);
-	if (ret) {
-		dev_err(&pci_dev->dev, "failed to register device\n");
-		put_device(&vi_dev->vdev.dev);
-		goto err_enable;
-	}
 
 #ifdef CONFIG_VIRTIO_IVSHMEM_DEBUG
 	vi_dev->shmem_sz_used = (vi_dev->virtio_header->size + (chunk_size - 1))
@@ -154,7 +118,7 @@ static void virtio_ivshmem_remove(struct pci_dev *pci_dev)
 	struct virtio_shmem_device *vi_dev = pci_get_drvdata(pci_dev);
 	struct device *dev = get_device(&vi_dev->vdev.dev);
 
-	unregister_virtio_device(&vi_dev->vdev);
+	virtio_shmem_remove(vi_dev);
 	pci_disable_device(pci_dev);
 	put_device(dev);
 	kfree(vi_dev);
