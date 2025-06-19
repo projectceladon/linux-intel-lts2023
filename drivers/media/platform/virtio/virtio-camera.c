@@ -689,58 +689,22 @@ static int vcam_s_ctrl(struct file *file, void *fh, struct v4l2_control *control
 
 static int vcam_s_ext_ctrls(struct file *file, void *fh, struct v4l2_ext_controls *controls)
 {
-    struct virtio_camera_video *vnode = video_drvdata(file);
-    struct virtio_camera_ctrl_req *vcam_req;
-    struct virtio_camera_mem_entry *ents;
-    int err;
+    int err = 0;
 
-    // Allocate buffer for controls in kernel space
-    size_t size = sizeof(struct virtio_camera_req_ext_ctrls) +
-                  controls->count * sizeof(struct virtio_camera_req_ctrl);
-
-    struct virtio_camera_req_ext_ctrls *ext_ctrls = kmalloc(size, GFP_KERNEL);
-    if (!ext_ctrls) {
-        pr_err("virtio-camera: vnode%d fail to alloc ext_ctrls, no mem.\n", vnode->idx);
-        return -ENOMEM;
-    }
-
-    // Copy controls data into the allocated buffer
-    ext_ctrls->count = controls->count;
     for (int i = 0; i < controls->count; i++) {
-        ext_ctrls->controls[i].id = controls->controls[i].id;
-        ext_ctrls->controls[i].value = controls->controls[i].value;
+        struct v4l2_control control;
+        control.id = controls->controls[i].id;
+        control.value = controls->controls[i].value;
+
+        err = vcam_s_ctrl(file, fh, &control);
+        if (err) {
+            pr_err("virtio-camera: failed to set control id %d, error: %d\n", control.id, err);
+            /* You might decide whether to break on the first error or continue trying others */
+            break; // If you want to abort on first error
+            // continue; // If you want to attempt setting remaining controls despite errors
+        }
     }
 
-    // Create request
-    vcam_req = virtio_camera_create_req(VIRTIO_CAMERA_CMD_SET_EXT_CTRLS);
-    if (unlikely(vcam_req == NULL)) {
-        pr_err("virtio-camera: vnode%d fail to init set_ext_ctrls-req, no mem.\n", vnode->idx);
-        kfree(ext_ctrls);
-        return -ENOMEM;
-    }
-
-    // Allocate and initialize virtio_camera_mem_entry
-    ents = kmalloc(sizeof(struct virtio_camera_mem_entry), GFP_KERNEL);
-    if (!ents) {
-        pr_err("virtio-camera: vnode%d fail to alloc ents, no mem.\n", vnode->idx);
-        kfree(vcam_req);
-        kfree(ext_ctrls);
-        return -ENOMEM;
-    }
-
-    ents->addr = (uintptr_t)ext_ctrls; // GPA to HVA conversion will be handled later
-    ents->length = size;
-
-    // Send request
-    err = vcam_vq_request(vnode, vcam_req, ents, 1, false);
-    if (err) {
-        pr_err("virtio-camera: vnode%d set_ext_ctrls failed, err response.\n", vnode->idx);
-    }
-
-    // Clean up resources
-    kfree(ents);
-    kfree(vcam_req);
-    kfree(ext_ctrls);
     return err;
 }
 
