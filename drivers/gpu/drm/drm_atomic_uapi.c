@@ -1313,6 +1313,7 @@ static void complete_signaling(struct drm_device *dev,
 		 * to prevent a double free in drm_atomic_state_clear.
 		 */
 		if (event && (event->base.fence || event->base.file_priv)) {
+			DRM_ERROR("complete_signaling event cancel\n")
 			drm_event_cancel_free(dev, &event->base);
 			crtc_state->event = NULL;
 		}
@@ -1330,7 +1331,7 @@ static void complete_signaling(struct drm_device *dev,
 		/* If this fails log error to the user */
 		if (fence_state[i].out_fence_ptr &&
 		    put_user(-1, fence_state[i].out_fence_ptr))
-			drm_dbg_atomic(dev, "Couldn't clear out_fence_ptr\n");
+			drm_warn(dev, "Couldn't clear out_fence_ptr\n");
 	}
 
 	kfree(fence_state);
