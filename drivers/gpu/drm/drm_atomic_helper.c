@@ -827,7 +827,7 @@ drm_atomic_helper_check_wb_encoder_state(struct drm_encoder *encoder,
 		if (fb->format->format == formats[i])
 			return 0;
 
-	drm_dbg_kms(encoder->dev, "Invalid pixel format %p4cc\n", &fb->format->format);
+	drm_warn(encoder->dev, "Invalid pixel format %p4cc\n", &fb->format->format);
 
 	return -EINVAL;
 }
@@ -885,7 +885,7 @@ int drm_atomic_helper_check_plane_state(struct drm_plane_state *plane_state,
 	}
 
 	if (!crtc_state->enable && !can_update_disabled) {
-		drm_dbg_kms(plane_state->plane->dev,
+		drm_warn(plane_state->plane->dev,
 			    "Cannot update plane of a disabled CRTC.\n");
 		return -EINVAL;
 	}
@@ -896,7 +896,7 @@ int drm_atomic_helper_check_plane_state(struct drm_plane_state *plane_state,
 	hscale = drm_rect_calc_hscale(src, dst, min_scale, max_scale);
 	vscale = drm_rect_calc_vscale(src, dst, min_scale, max_scale);
 	if (hscale < 0 || vscale < 0) {
-		drm_dbg_kms(plane_state->plane->dev,
+		drm_warn(plane_state->plane->dev,
 			    "Invalid scaling of plane\n");
 		drm_rect_debug_print("src: ", &plane_state->src, true);
 		drm_rect_debug_print("dst: ", &plane_state->dst, false);
@@ -921,7 +921,7 @@ int drm_atomic_helper_check_plane_state(struct drm_plane_state *plane_state,
 		return 0;
 
 	if (!can_position && !drm_rect_equals(dst, &clip)) {
-		drm_dbg_kms(plane_state->plane->dev,
+		drm_warn(plane_state->plane->dev,
 			    "Plane must cover entire CRTC\n");
 		drm_rect_debug_print("dst: ", dst, false);
 		drm_rect_debug_print("clip: ", &clip, false);
@@ -1598,6 +1598,7 @@ int drm_atomic_helper_wait_for_fences(struct drm_device *dev,
 	struct drm_plane *plane;
 	struct drm_plane_state *new_plane_state;
 	int i, ret;
+	struct dma_fence *fence ;
 
 	set_fence_deadline(dev, state);
 
@@ -1612,9 +1613,20 @@ int drm_atomic_helper_wait_for_fences(struct drm_device *dev,
 		 * still interrupt the operation. Instead of blocking until the
 		 * timer expires, make the wait interruptible.
 		 */
-		ret = dma_fence_wait(new_plane_state->fence, pre_swap);
-		if (ret)
+//		ret = dma_fence_wait(new_plane_state->fence, pre_swap);
+//		if (ret)
+//			return ret;
+		fence = new_plane_state->fence;
+		ret = dma_fence_wait_timeout(fence, pre_swap, msecs_to_jiffies(5000));
+		if (ret = 0) {
+			DRM_ERROR("drm_atomic_helper_wait_for_fences timeout, fence:%s:%s\n",fence->ops->get_driver_name(fence),
+											fence->ops->get_timeline_name(fence));
+		}
+		if (ret < 0) {
+			DRM_ERROR("drm_atomic_helper_wait_for_fences error:%d\n, fence:%s:%s", ret,fence->ops->get_driver_name(fence),
+											fence->ops->get_timeline_name(fence));
 			return ret;
+		}
 
 		dma_fence_put(new_plane_state->fence);
 		new_plane_state->fence = NULL;
@@ -1884,14 +1896,14 @@ int drm_atomic_helper_async_check(struct drm_device *dev,
 
 	/* FIXME: we support only single plane updates for now */
 	if (n_planes != 1) {
-		drm_dbg_atomic(dev,
+		drm_warn(dev,
 			       "only single plane async updates are supported\n");
 		return -EINVAL;
 	}
 
 	if (!new_plane_state->crtc ||
 	    old_plane_state->crtc != new_plane_state->crtc) {
-		drm_dbg_atomic(dev,
+		drm_warn(dev,
 			       "[PLANE:%d:%s] async update cannot change CRTC\n",
 			       plane->base.id, plane->name);
 		return -EINVAL;
@@ -1899,14 +1911,14 @@ int drm_atomic_helper_async_check(struct drm_device *dev,
 
 	funcs = plane->helper_private;
 	if (!funcs->atomic_async_update) {
-		drm_dbg_atomic(dev,
+		drm_warn(dev,
 			       "[PLANE:%d:%s] driver does not support async updates\n",
 			       plane->base.id, plane->name);
 		return -EINVAL;
 	}
 
 	if (new_plane_state->fence) {
-		drm_dbg_atomic(dev,
+		drm_warn(dev,
 			       "[PLANE:%d:%s] missing fence for async update\n",
 			       plane->base.id, plane->name);
 		return -EINVAL;
@@ -1919,7 +1931,7 @@ int drm_atomic_helper_async_check(struct drm_device *dev,
 	 */
 	if (old_plane_state->commit &&
 	    !try_wait_for_completion(&old_plane_state->commit->hw_done)) {
-		drm_dbg_atomic(dev,
+		drm_warn(dev,
 			       "[PLANE:%d:%s] inflight previous commit preventing async commit\n",
 			       plane->base.id, plane->name);
 		return -EBUSY;
@@ -1927,7 +1939,7 @@ int drm_atomic_helper_async_check(struct drm_device *dev,
 
 	ret = funcs->atomic_async_check(plane, state);
 	if (ret != 0)
-		drm_dbg_atomic(dev,
+		drm_warn(dev,
 			       "[PLANE:%d:%s] driver async check failed\n",
 			       plane->base.id, plane->name);
 	return ret;
@@ -2148,7 +2160,7 @@ static int stall_checks(struct drm_crtc *crtc, bool nonblock)
 			 */
 			if (!completed && nonblock) {
 				spin_unlock(&crtc->commit_lock);
-				drm_dbg_atomic(crtc->dev,
+				drm_warn(crtc->dev,
 					       "[CRTC:%d:%s] busy with a previous commit\n",
 					       crtc->base.id, crtc->name);
 
@@ -2337,7 +2349,7 @@ int drm_atomic_helper_setup_commit(struct drm_atomic_state *state,
 		 */
 		if (nonblock && old_conn_state->commit &&
 		    !try_wait_for_completion(&old_conn_state->commit->flip_done)) {
-			drm_dbg_atomic(conn->dev,
+			drm_warn(conn->dev,
 				       "[CONNECTOR:%d:%s] busy with a previous commit\n",
 				       conn->base.id, conn->name);
 
@@ -2359,7 +2371,7 @@ int drm_atomic_helper_setup_commit(struct drm_atomic_state *state,
 		 */
 		if (nonblock && old_plane_state->commit &&
 		    !try_wait_for_completion(&old_plane_state->commit->flip_done)) {
-			drm_dbg_atomic(plane->dev,
+			drm_warn(plane->dev,
 				       "[PLANE:%d:%s] busy with a previous commit\n",
 				       plane->base.id, plane->name);
 

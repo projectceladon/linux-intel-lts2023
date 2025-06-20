@@ -217,7 +217,7 @@ drm_atomic_set_crtc_for_plane(struct drm_plane_state *plane_state,
 			       plane->base.id, plane->name, plane_state,
 			       crtc->base.id, crtc->name);
 	else
-		drm_dbg_atomic(plane->dev,
+		drm_warn(plane->dev,
 			       "Link [PLANE:%d:%s] state %p to [NOCRTC]\n",
 			       plane->base.id, plane->name, plane_state);
 
@@ -306,7 +306,7 @@ drm_atomic_set_crtc_for_connector(struct drm_connector_state *conn_state,
 			       connector->base.id, connector->name,
 			       conn_state, crtc->base.id, crtc->name);
 	} else {
-		drm_dbg_atomic(connector->dev,
+		drm_warn(connector->dev,
 			       "Link [CONNECTOR:%d:%s] state %p to [NOCRTC]\n",
 			       connector->base.id, connector->name,
 			       conn_state);
@@ -1313,6 +1313,7 @@ static void complete_signaling(struct drm_device *dev,
 		 * to prevent a double free in drm_atomic_state_clear.
 		 */
 		if (event && (event->base.fence || event->base.file_priv)) {
+			DRM_ERROR("complete_signaling event cancel\n");
 			drm_event_cancel_free(dev, &event->base);
 			crtc_state->event = NULL;
 		}
@@ -1330,7 +1331,7 @@ static void complete_signaling(struct drm_device *dev,
 		/* If this fails log error to the user */
 		if (fence_state[i].out_fence_ptr &&
 		    put_user(-1, fence_state[i].out_fence_ptr))
-			drm_dbg_atomic(dev, "Couldn't clear out_fence_ptr\n");
+			drm_warn(dev, "Couldn't clear out_fence_ptr\n");
 	}
 
 	kfree(fence_state);
