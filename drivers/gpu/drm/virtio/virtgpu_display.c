@@ -61,6 +61,7 @@ static int virtio_irq_enable_vblank(struct drm_crtc *crtc)
 	do {
 		virtio_gpu_vblank_poll_arm(vgdev->vblank[output->index].vblank.vq);
 	} while (!virtqueue_enable_cb(vgdev->vblank[output->index].vblank.vq));
+	vgdev->vblank[output->index].enabled = true;
 	return 0;
 }
 
@@ -71,7 +72,11 @@ static void virtio_irq_disable_vblank(struct drm_crtc *crtc)
 	vgdev = dev->dev_private;
 	struct virtio_gpu_output *output = drm_crtc_to_virtio_gpu_output(crtc);
 
-	virtqueue_disable_cb(vgdev->vblank[output->index].vblank.vq);
+	if (vgdev->cache_event[output->index]) {
+		printk("bosheng pending event in disable vblank\n");
+		virtqueue_disable_cb(vgdev->vblank[output->index].vblank.vq);
+		vgdev->vblank[output->index].enabled = false;
+	}
 }
 
 static const struct drm_crtc_funcs virtio_gpu_crtc_funcs = {
