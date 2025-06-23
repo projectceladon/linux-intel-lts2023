@@ -833,7 +833,10 @@ void virtio_gpu_cmd_resource_flush(struct virtio_gpu_device *vgdev,
 	cmd_p->r.x = cpu_to_le32(x);
 	cmd_p->r.y = cpu_to_le32(y);
 
-	virtio_gpu_queue_fenced_ctrl_buffer(vgdev, vbuf, fence);
+	if (fence)
+		virtio_gpu_queue_fenced_ctrl_buffer(vgdev, vbuf, fence);
+	else
+		virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
 }
 
 void virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *vgdev,
