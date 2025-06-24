@@ -79,6 +79,7 @@ struct virtio_snd {
 
 /* Message completion timeout in milliseconds (module parameter). */
 extern u32 virtsnd_msg_timeout_ms;
+extern u32 virtsnd_verbose;
 
 static inline struct virtio_snd_queue *
 virtsnd_control_queue(struct virtio_snd *snd)
