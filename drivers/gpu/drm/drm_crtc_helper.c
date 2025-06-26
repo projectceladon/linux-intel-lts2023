@@ -749,7 +749,7 @@ int drm_crtc_helper_set_config(struct drm_mode_set *set,
 				      connector->base.id, connector->name,
 				      new_crtc->base.id, new_crtc->name);
 		} else {
-			DRM_DEBUG_KMS("[CONNECTOR:%d:%s] to [NOCRTC]\n",
+			DRM_ERROR("[CONNECTOR:%d:%s] to [NOCRTC]\n",
 				      connector->base.id, connector->name);
 		}
 	}

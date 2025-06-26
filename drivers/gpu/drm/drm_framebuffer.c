@@ -404,7 +404,7 @@ static void drm_mode_rmfb_work_fn(struct work_struct *w)
 		struct drm_framebuffer *fb =
 			list_first_entry(&arg->fbs, typeof(*fb), filp_head);
 
-		drm_dbg_kms(fb->dev,
+		drm_warn(fb->dev,
 			    "Removing [FB:%d] from all active usage due to RMFB ioctl\n",
 			    fb->base.id);
 		list_del_init(&fb->filp_head);
@@ -984,7 +984,7 @@ retry:
 		if (plane->state->fb != fb)
 			continue;
 
-		drm_dbg_kms(dev,
+		drm_warn(dev,
 			    "Disabling [PLANE:%d:%s] because [FB:%d] is removed\n",
 			    plane->base.id, plane->name, fb->base.id);
 
@@ -997,7 +997,7 @@ retry:
 		if (disable_crtcs && plane_state->crtc->primary == plane) {
 			struct drm_crtc_state *crtc_state;
 
-			drm_dbg_kms(dev,
+			drm_warn(dev,
 				    "Disabling [CRTC:%d:%s] because [FB:%d] is removed\n",
 				    plane_state->crtc->base.id,
 				    plane_state->crtc->name, fb->base.id);

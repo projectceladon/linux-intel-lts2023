@@ -27,6 +27,8 @@ EXPORT_TRACEPOINT_SYMBOL(dma_fence_signaled);
 static DEFINE_SPINLOCK(dma_fence_stub_lock);
 static struct dma_fence dma_fence_stub;
 
+static u64 seqno_crtc_0 = 0;
+static u64 seqno_crtc_1 = 0;
 /*
  * fence context counter: each execution context should have its own
  * fence context, this allows checking if fences belong to the same
@@ -369,6 +371,27 @@ int dma_fence_signal_timestamp_locked(struct dma_fence *fence,
 {
 	struct dma_fence_cb *cur, *tmp;
 	struct list_head cb_list;
+	const char *timeline = NULL;
+
+	timeline = fence->ops->get_timeline_name(fence);
+	if (timeline) {
+		if (strstr(timeline, "crtc-0")) {
+			if (seqno_crtc_0 == 0)
+				seqno_crtc_0 = fence->seqno;
+			if (fence->seqno != (seqno_crtc_0 +1)) {
+				printk("signal crtc-0 miss seq from %llx to %llx\n", seqno_crtc_0, fence->seqno);
+			}
+			seqno_crtc_0 = fence->seqno;
+		}
+		if (strstr(timeline, "crtc-1")) {
+			if (seqno_crtc_1 == 0)
+				seqno_crtc_1 = fence->seqno;
+			if (fence->seqno != (seqno_crtc_1 +1)) {
+				printk("signal crtc-1 miss seq from %llx to %llx\n", seqno_crtc_1, fence->seqno);
+			}
+			seqno_crtc_1 = fence->seqno;
+		}
+	}
 
 	lockdep_assert_held(fence->lock);
 
